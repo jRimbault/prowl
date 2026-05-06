@@ -174,16 +174,14 @@ async fn main() -> anyhow::Result<()> {
                             // `+` and `=` both bound so the user does not have
                             // to hold Shift on US-style keyboards. `-` is the
                             // sole minus key.
-                            KeyCode::Char('+') | KeyCode::Char('=') => {
-                                if app.step_interval_up() {
+                            KeyCode::Char('+') | KeyCode::Char('=')
+                                if app.step_interval_up() => {
                                     let _ = interval_tx.send(app.interval());
                                 }
-                            }
-                            KeyCode::Char('-') => {
-                                if app.step_interval_down() {
+                            KeyCode::Char('-')
+                                if app.step_interval_down() => {
                                     let _ = interval_tx.send(app.interval());
                                 }
-                            }
                             _ => {}
                         }
                     }

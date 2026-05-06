@@ -152,10 +152,8 @@ pub fn pick() -> anyhow::Result<Option<process::Pid>> {
                     KeyCode::Up => {
                         selected = selected.saturating_sub(1);
                     }
-                    KeyCode::Down => {
-                        if !matches.is_empty() {
-                            selected = (selected + 1).min(matches.len() - 1);
-                        }
+                    KeyCode::Down if !matches.is_empty() => {
+                        selected = (selected + 1).min(matches.len() - 1);
                     }
 
                     // --- Query editing ---
