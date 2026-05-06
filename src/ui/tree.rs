@@ -255,7 +255,7 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" nav ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" ⏎", Style::new().fg(Color::Cyan)),
+            Span::styled(" ␣", Style::new().fg(Color::Cyan)),
             Span::styled(" collapse ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([

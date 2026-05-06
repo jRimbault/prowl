@@ -20,6 +20,6 @@ Omit the PID to launch an interactive process picker.
 | `←` / `→`           | Scroll the command column            |
 | `Ctrl+↑` / `Ctrl+↓` | Jump to the first / last row         |
 | `Ctrl+←` / `Ctrl+→` | Jump to the leftmost / rightmost     |
-| `Enter`             | Collapse / expand the subtree        |
+| `Space`             | Collapse / expand the subtree        |
 | `t`                 | Toggle thread visibility             |
 | `+` / `-`           | Slow down / speed up polling (100ms) |

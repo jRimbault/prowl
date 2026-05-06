@@ -170,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
                             KeyCode::Left => app.scroll_left(),
                             KeyCode::Right => app.scroll_right(),
                             KeyCode::Char('t') => app.toggle_threads(),
-                            KeyCode::Enter => app.toggle_collapse(),
+                            KeyCode::Char(' ') => app.toggle_collapse(),
                             // `+` and `=` both bound so the user does not have
                             // to hold Shift on US-style keyboards. `-` is the
                             // sole minus key.
