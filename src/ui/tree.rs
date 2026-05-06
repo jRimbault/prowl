@@ -259,6 +259,10 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" collapse ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
+            Span::styled(" ⏎", Style::new().fg(Color::Cyan)),
+            Span::styled(" detail ", Style::new().fg(Color::White)),
+        ])),
+        Line::from(Vec::from([
             Span::styled(" t", Style::new().fg(Color::Cyan)),
             Span::styled("hreads ", Style::new().fg(Color::White)),
         ])),
@@ -273,6 +277,7 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(Color::DarkGray))
                 .merge_borders(MergeStrategy::Fuzzy)
+                .title_bottom(footer_hints.next().unwrap())
                 .title_bottom(footer_hints.next().unwrap())
                 .title_bottom(footer_hints.next().unwrap())
                 .title_bottom(footer_hints.next().unwrap())

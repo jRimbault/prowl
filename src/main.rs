@@ -22,7 +22,7 @@ use crossterm::{
 };
 use futures::StreamExt as _;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use tokio::sync::watch;
+use tokio::{sync::watch, task};
 
 mod app;
 mod collector;
@@ -142,13 +142,20 @@ async fn main() -> anyhow::Result<()> {
                     },
                     Err(_) => app.mark_exited(),
                 }
+                // Refresh the detail panel while it is open.
+                if let Some(pid) = app.detail_pid()
+                    && let Ok(Ok(info)) = task::spawn_blocking(move || process::collect_detail(pid)).await
+                {
+                    app.set_detail_info(info);
+                }
             }
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
                         match key.code {
                             KeyCode::Char('q') => break,
-                            KeyCode::Esc => break,
+                            // Esc closes the detail panel if open; otherwise quits.
+                            KeyCode::Esc if !app.close_detail() => break,
                             // Ctrl+arrow jumps to the corresponding extremity;
                             // plain arrows step by one. The Ctrl variants are
                             // matched first so the unmodified arms only fire
@@ -171,6 +178,15 @@ async fn main() -> anyhow::Result<()> {
                             KeyCode::Right => app.scroll_right(),
                             KeyCode::Char('t') => app.toggle_threads(),
                             KeyCode::Char(' ') => app.toggle_collapse(),
+                            KeyCode::Enter => {
+                                if let Some(pid) = app.toggle_detail() {
+                                    // Fetch detail on a blocking thread so the async
+                                    // runtime is not stalled by procfs I/O.
+                                    if let Ok(Ok(info)) = task::spawn_blocking(move || process::collect_detail(pid)).await {
+                                        app.set_detail_info(info);
+                                    }
+                                }
+                            }
                             // `+` and `=` both bound so the user does not have
                             // to hold Shift on US-style keyboards. `-` is the
                             // sole minus key.

@@ -11,7 +11,7 @@ use std::{
 
 use crate::{
     format::Percent,
-    process::{Node, Pid, Tree},
+    process::{Node, Pid, ProcessDetail, Tree},
     tree::{Row, flatten},
 };
 
@@ -96,6 +96,10 @@ pub struct App {
     /// The renderer clamps this each frame to a maximum derived from the
     /// longest visible row, so input handlers can grow the value freely.
     h_scroll: usize,
+    /// PID currently shown in the detail panel; `None` when the panel is hidden.
+    detail_pid: Option<Pid>,
+    /// Last fetched detail data for `detail_pid`.  Cleared when the panel closes.
+    detail_info: Option<ProcessDetail>,
 }
 
 impl App {
@@ -115,6 +119,8 @@ impl App {
             cpu_count: cpu_count.max(1),
             interval: clamp_interval(interval),
             h_scroll: 0,
+            detail_pid: None,
+            detail_info: None,
         }
     }
 
@@ -164,6 +170,14 @@ impl App {
 
     pub fn h_scroll(&self) -> usize {
         self.h_scroll
+    }
+
+    pub fn detail_pid(&self) -> Option<Pid> {
+        self.detail_pid
+    }
+
+    pub fn detail_info(&self) -> Option<&ProcessDetail> {
+        self.detail_info.as_ref()
     }
 
     /// Shift the command column rightward (text moves left under the
@@ -311,6 +325,44 @@ impl App {
                 self.selected = self.flat_rows.len() - 1;
             }
             self.sync_scroll();
+        }
+    }
+
+    /// Toggle the detail panel for the currently selected row.
+    ///
+    /// - If the panel is already showing this PID, closes it and returns `None`.
+    /// - Otherwise, opens the panel for the selected PID and returns that PID
+    ///   so the caller can fetch `ProcessDetail` and call `set_detail_info`.
+    pub fn toggle_detail(&mut self) -> Option<Pid> {
+        if let Some(row) = self.flat_rows.get(self.selected) {
+            let pid = row.pid();
+            if self.detail_pid == Some(pid) {
+                self.detail_pid = None;
+                self.detail_info = None;
+                None
+            } else {
+                self.detail_pid = Some(pid);
+                self.detail_info = None;
+                Some(pid)
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Store freshly fetched detail info for the currently open panel.
+    pub fn set_detail_info(&mut self, info: ProcessDetail) {
+        self.detail_info = Some(info);
+    }
+
+    /// Close the detail panel if it is open.  Returns `true` if it was open.
+    pub fn close_detail(&mut self) -> bool {
+        if self.detail_pid.is_some() {
+            self.detail_pid = None;
+            self.detail_info = None;
+            true
+        } else {
+            false
         }
     }
 

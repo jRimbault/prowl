@@ -1,8 +1,10 @@
 //! UI rendering entry point.
 //!
-//! Splits the terminal frame into a fixed-height header panel and a
-//! fill-height tree table, then delegates each region to its module.
+//! Splits the terminal frame into a fixed-height header panel, a fill-height
+//! tree table, and an optional detail panel at the bottom that appears when
+//! the user opens it with Enter.
 
+mod detail;
 mod header;
 mod tree;
 
@@ -12,16 +14,34 @@ use ratatui::{
     layout::{Constraint, Layout, Spacing},
 };
 
+/// Height of the detail panel block (includes top/bottom borders).
+const DETAIL_HEIGHT: u16 = 10;
+
 /// Render a full terminal frame.
 ///
 /// `app` is mutably borrowed because the tree renderer updates
 /// `app.visible_rows` so scroll synchronisation in `App` knows how many
 /// rows are currently on screen.
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let [header_area, tree_area] = Layout::vertical([Constraint::Length(9), Constraint::Fill(1)])
+    if app.detail_pid().is_some() {
+        let [header_area, tree_area, detail_area] = Layout::vertical([
+            Constraint::Length(9),
+            Constraint::Fill(1),
+            Constraint::Length(DETAIL_HEIGHT),
+        ])
         .spacing(Spacing::Overlap(1))
         .areas(frame.area());
 
-    header::render_header(frame, app, header_area);
-    tree::render_tree(frame, app, tree_area);
+        header::render_header(frame, app, header_area);
+        tree::render_tree(frame, app, tree_area);
+        detail::render_detail(frame, app, detail_area);
+    } else {
+        let [header_area, tree_area] =
+            Layout::vertical([Constraint::Length(9), Constraint::Fill(1)])
+                .spacing(Spacing::Overlap(1))
+                .areas(frame.area());
+
+        header::render_header(frame, app, header_area);
+        tree::render_tree(frame, app, tree_area);
+    }
 }

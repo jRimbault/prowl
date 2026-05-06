@@ -547,6 +547,75 @@ fn collect_threads(
         .collect()
 }
 
+/// Detailed information about a single process or thread, fetched on-demand
+/// when the user opens the detail panel.
+pub struct ProcessDetail {
+    #[allow(dead_code)]
+    pub pid: Pid,
+    pub exe: Option<String>,
+    pub cwd: Option<String>,
+    pub fd_count: usize,
+    /// Environment variables as (key, value) pairs, sorted by key.
+    pub environ: Vec<(String, String)>,
+    pub nice: i64,
+    pub priority: i64,
+    pub vm_peak_kb: Option<u64>,
+    pub vm_rss_kb: Option<u64>,
+    pub voluntary_ctxt_switches: Option<u64>,
+    pub nonvoluntary_ctxt_switches: Option<u64>,
+}
+
+/// Collect detailed per-process information for the detail panel.
+///
+/// Unlike `collect_tree`, this reads only a single PID and gathers fields
+/// that are too expensive or too verbose to include in every tree row.
+/// Called only when the panel is open, never during background sampling.
+pub fn collect_detail(pid: Pid) -> anyhow::Result<ProcessDetail> {
+    let proc = Process::new(pid.get())?;
+    let stat = proc.stat()?;
+
+    let exe = proc.exe().ok().map(|p| p.to_string_lossy().into_owned());
+    let cwd = proc.cwd().ok().map(|p| p.to_string_lossy().into_owned());
+    // fd_count reads only the count without allocating descriptors.
+    let fd_count = proc.fd_count().unwrap_or(0);
+
+    let mut environ: Vec<(String, String)> = proc
+        .environ()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    environ.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    let status = proc.status();
+    let vm_peak_kb = status.as_ref().ok().and_then(|s| s.vmpeak);
+    let vm_rss_kb = status.as_ref().ok().and_then(|s| s.vmrss);
+    let voluntary_ctxt_switches = status.as_ref().ok().and_then(|s| s.voluntary_ctxt_switches);
+    let nonvoluntary_ctxt_switches = status
+        .as_ref()
+        .ok()
+        .and_then(|s| s.nonvoluntary_ctxt_switches);
+
+    Ok(ProcessDetail {
+        pid,
+        exe,
+        cwd,
+        fd_count,
+        environ,
+        nice: stat.nice,
+        priority: stat.priority,
+        vm_peak_kb,
+        vm_rss_kb,
+        voluntary_ctxt_switches,
+        nonvoluntary_ctxt_switches,
+    })
+}
+
 /// Compute how long the process has been running.
 ///
 /// `starttime` is clock ticks since boot (from `/proc/<pid>/stat`).
