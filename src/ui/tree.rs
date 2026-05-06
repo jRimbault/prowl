@@ -201,18 +201,30 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let footer_hints = Line::from(vec![
-        Span::styled(" q/Esc", Style::new().fg(Color::White).bold()),
-        Span::styled(" quit ", Style::new().fg(Color::DarkGray)),
-        Span::styled("↑↓", Style::new().fg(Color::White).bold()),
-        Span::styled(" nav ", Style::new().fg(Color::DarkGray)),
-        Span::styled("⏎", Style::new().fg(Color::White).bold()),
-        Span::styled(" collapse ", Style::new().fg(Color::DarkGray)),
-        Span::styled("t", Style::new().fg(Color::White).bold()),
-        Span::styled(" threads ", Style::new().fg(Color::DarkGray)),
-        Span::styled("+/-", Style::new().fg(Color::White).bold()),
-        Span::styled(" rate ", Style::new().fg(Color::DarkGray)),
-    ]);
+    let mut footer_hints = [
+        Line::from(Vec::from([
+            Span::styled(" q/Esc", Style::new().fg(Color::White).bold()),
+            Span::styled(" quit ", Style::new().fg(Color::DarkGray)),
+        ])),
+        Line::from(Vec::from([
+            Span::styled(" ↑", Style::new().fg(Color::White).bold()),
+            Span::styled(" nav ", Style::new().fg(Color::DarkGray)),
+            Span::styled("↓ ", Style::new().fg(Color::White).bold()),
+        ])),
+        Line::from(Vec::from([
+            Span::styled(" ⏎", Style::new().fg(Color::White).bold()),
+            Span::styled(" collapse ", Style::new().fg(Color::DarkGray)),
+        ])),
+        Line::from(Vec::from([
+            Span::styled(" t", Style::new().fg(Color::White).bold()),
+            Span::styled(" threads ", Style::new().fg(Color::DarkGray)),
+        ])),
+        Line::from(Vec::from([
+            Span::styled(" +/-", Style::new().fg(Color::White).bold()),
+            Span::styled(" rate ", Style::new().fg(Color::DarkGray)),
+        ])),
+    ]
+    .into_iter();
 
     let table = Table::new(rows, widths)
         .header(header)
@@ -221,7 +233,11 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(Color::DarkGray))
-                .title_bottom(footer_hints),
+                .title_bottom(footer_hints.next().unwrap())
+                .title_bottom(footer_hints.next().unwrap())
+                .title_bottom(footer_hints.next().unwrap())
+                .title_bottom(footer_hints.next().unwrap())
+                .title_bottom(footer_hints.next().unwrap()),
         )
         .row_highlight_style(Style::new().bg(Color::DarkGray).bold())
         .column_spacing(1);
