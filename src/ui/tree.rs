@@ -1,8 +1,8 @@
 //! Tree-table widget — htop-style columnar view of the process tree.
 //!
-//! Renders the flattened `tree::Row` list from `App` as a ratatui `Table` with
-//! colour-coded CPU and memory bars.  The function calls `app.set_visible_rows`
-//! so that `App::sync_scroll` can keep the selection visible on the next tick.
+//! Renders the flattened `tree::Row` list from `App` as a ratatui `Table`.
+//! The function calls `app.set_visible_rows` so that `App::sync_scroll` can
+//! keep the selection visible on the next tick.
 //!
 //! At narrow terminal widths, lower-priority columns are progressively hidden
 //! so the Command column always gets a reasonable amount of space.
@@ -20,9 +20,6 @@ use ratatui::{
 struct ColumnSet {
     user: bool,
     state_full: bool, // full word vs single char
-    cpu_bar: bool,
-    mem_pct: bool,
-    mem_bar: bool,
     res: bool,
     elapsed: bool,
     /// Show accumulated CPU time alongside wall-clock elapsed.
@@ -34,62 +31,47 @@ impl ColumnSet {
     fn for_width(w: u16) -> Self {
         // Thresholds based on total inner width. Each tier ensures at least
         // ~25 columns remain for the Command column.
-        if w >= 140 {
+        if w >= 120 {
             // Full layout + CPU time column
             Self {
                 user: true,
                 state_full: true,
-                cpu_bar: true,
-                mem_pct: true,
-                mem_bar: true,
                 res: true,
                 elapsed: true,
                 cpu_time: true,
             }
-        } else if w >= 120 {
+        } else if w >= 100 {
             // Full layout
             Self {
                 user: true,
                 state_full: true,
-                cpu_bar: true,
-                mem_pct: true,
-                mem_bar: true,
                 res: true,
                 elapsed: true,
                 cpu_time: false,
             }
-        } else if w >= 100 {
-            // Drop ELAPSED and MEM bar
+        } else if w >= 80 {
+            // Drop ELAPSED
             Self {
                 user: true,
                 state_full: true,
-                cpu_bar: true,
-                mem_pct: true,
-                mem_bar: false,
                 res: true,
                 elapsed: false,
                 cpu_time: false,
             }
         } else if w >= 70 {
-            // Drop CPU bar, RES; abbreviate STATE
+            // Drop RES; abbreviate STATE
             Self {
                 user: true,
                 state_full: false,
-                cpu_bar: false,
-                mem_pct: true,
-                mem_bar: false,
                 res: false,
                 elapsed: false,
                 cpu_time: false,
             }
         } else if w >= 50 {
-            // Drop USER, MEM%
+            // Drop USER
             Self {
                 user: false,
                 state_full: false,
-                cpu_bar: false,
-                mem_pct: false,
-                mem_bar: false,
                 res: false,
                 elapsed: false,
                 cpu_time: false,
@@ -99,9 +81,6 @@ impl ColumnSet {
             Self {
                 user: false,
                 state_full: false,
-                cpu_bar: false,
-                mem_pct: false,
-                mem_bar: false,
                 res: false,
                 elapsed: false,
                 cpu_time: false,
@@ -134,18 +113,6 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     header_cells.push(Cell::new("CPU%"));
     widths.push(Constraint::Length(5));
-    if cols.cpu_bar {
-        header_cells.push(Cell::new("CPU"));
-        widths.push(Constraint::Length(10));
-    }
-    if cols.mem_pct {
-        header_cells.push(Cell::new("MEM%"));
-        widths.push(Constraint::Length(5));
-    }
-    if cols.mem_bar {
-        header_cells.push(Cell::new("MEM"));
-        widths.push(Constraint::Length(10));
-    }
     if cols.res {
         header_cells.push(Cell::new("RES"));
         widths.push(Constraint::Length(8));
@@ -171,7 +138,6 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|(i, fr)| {
             let is_selected = i == selected;
             let cpu_color = fr.cpu_pct().color_scaled(app.cpu_count() as f64 * 100.0);
-            let mem_color = fr.mem_pct().color();
 
             let collapse_marker = if fr.has_children() {
                 if fr.is_collapsed() { "▸ " } else { "▾ " }
@@ -209,31 +175,6 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
                 Cell::new(format!("{:>4.1}", fr.cpu_pct().value()))
                     .style(Style::new().fg(cpu_color)),
             );
-            if cols.cpu_bar {
-                cells.push(
-                    Cell::new(format::bar(fr.cpu_pct(), 8)).style(Style::new().fg(cpu_color)),
-                );
-            }
-            if cols.mem_pct {
-                cells.push(
-                    Cell::new(if is_thread {
-                        String::new()
-                    } else {
-                        format!("{:>4.1}", fr.mem_pct().value())
-                    })
-                    .style(Style::new().fg(mem_color)),
-                );
-            }
-            if cols.mem_bar {
-                cells.push(
-                    Cell::new(if is_thread {
-                        String::new()
-                    } else {
-                        format::bar(fr.mem_pct(), 8)
-                    })
-                    .style(Style::new().fg(mem_color)),
-                );
-            }
             if cols.res {
                 cells.push(Cell::new(if is_thread {
                     String::new()

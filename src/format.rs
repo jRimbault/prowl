@@ -50,26 +50,6 @@ impl Percent {
     pub fn value(self) -> f64 {
         self.0
     }
-
-    /// Return the value as a ratio in [0.0, 1.0] for use with `bar`.
-    pub fn ratio(self) -> f64 {
-        self.0 / 100.0
-    }
-}
-
-/// Render a horizontal bar using braille dot characters.
-///
-/// Each braille cell represents two vertical positions. The bar fills from
-/// the left using the bottom dot row (⣀) and leaves empty cells as the
-/// braille blank (⠀), producing a thin baseline-style bar.
-///
-/// The ratio is taken from `pct.ratio()` and clamped to [0.0, 1.0].
-pub fn bar(pct: Percent, width: usize) -> String {
-    let ratio = pct.ratio().clamp(0.0, 1.0);
-    let filled = (ratio * width as f64).round() as usize;
-    let empty = width - filled;
-    // ⣤ = bottom two dots filled (U+28E4), ⠀ = braille blank (U+2800)
-    format!("{}{}", "⣤".repeat(filled), "⠀".repeat(empty))
 }
 
 /// Map a single-character process state to its full descriptive word.

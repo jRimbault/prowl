@@ -23,7 +23,6 @@ pub struct Row {
     user: String,
     state: char,
     cpu_pct: Percent,
-    mem_pct: Percent,
     mem_rss_bytes: u64,
     elapsed: Duration,
     /// Total CPU time consumed (utime + stime from `/proc/<pid>/stat`).
@@ -58,10 +57,6 @@ impl Row {
 
     pub fn cpu_pct(&self) -> Percent {
         self.cpu_pct
-    }
-
-    pub fn mem_pct(&self) -> Percent {
-        self.mem_pct
     }
 
     pub fn mem_rss_bytes(&self) -> u64 {
@@ -181,7 +176,6 @@ fn flatten_node(
         user: node.user().to_owned(),
         state: node.state(),
         cpu_pct: node.cpu_pct(),
-        mem_pct: node.mem_pct(),
         mem_rss_bytes: node.mem_rss_bytes(),
         elapsed: node.elapsed(),
         cpu_time: node.cpu_time(),
