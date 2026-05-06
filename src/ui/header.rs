@@ -16,11 +16,12 @@ use crate::{
     format,
 };
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    Frame,
+    layout::{Constraint, Layout, Rect, Spacing},
     style::{Color, Style},
+    symbols::merge::MergeStrategy,
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, TitlePosition},
-    Frame,
 };
 
 pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -47,6 +48,7 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(Color::DarkGray))
+        .merge_borders(MergeStrategy::Exact)
         .title(Span::styled(
             format!(" {} ", root.name()),
             Style::new().fg(Color::White).bold(),
@@ -56,12 +58,12 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let [main_area, cmd_row] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
+    // let [main_area, cmd_row] =
+    //     Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(inner);
 
     // CPU graph panel (left) | info column blocks (right).
     let [cpu_panel, info_panel] =
-        Layout::horizontal([Constraint::Percentage(35), Constraint::Fill(1)]).areas(main_area);
+        Layout::horizontal([Constraint::Percentage(35), Constraint::Fill(1)]).areas(inner);
 
     render_cpu_panel(
         frame,
@@ -71,16 +73,6 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         app.cpu_count(),
     );
     render_info_panel(frame, info_panel, root, app.mem_history());
-
-    // Row 6: full command line spanning both panels.
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw("  "),
-            label("CMD: "),
-            value(root.cmdline()),
-        ])),
-        cmd_row,
-    );
 }
 
 /// Render the left CPU panel: narrow label column + tall braille graph.
@@ -106,7 +98,7 @@ fn render_cpu_panel(
     // Decouple format from app: pass the iterator of Percent directly.
     let graph_rows = format::braille_graph_multi(history.iter(), graph_col.width as usize, rows);
     let cpu_color = cpu_pct.color_scaled(cpu_count as f64 * 100.0);
-    const ROW_LABELS: [&str; 4] = ["", "C", "P", "U"];
+    const ROW_LABELS: [&str; 5] = ["", "", "C", "P", "U"];
 
     for r in 0..rows {
         let y = area.top() + r as u16;
@@ -159,6 +151,7 @@ fn render_info_panel(
         Constraint::Fill(1),
         Constraint::Fill(1),
     ])
+    .spacing(Spacing::Overlap(1))
     .areas(columns_area);
 
     render_column(
@@ -223,11 +216,12 @@ fn render_column(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line<'st
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
+        .merge_borders(MergeStrategy::Fuzzy)
         .border_style(Style::new().fg(Color::DarkGray))
         .title_position(TitlePosition::Top)
         .title(Span::styled(
             format!(" {title} "),
-            Style::new().fg(Color::DarkGray),
+            Style::new().fg(Color::White).bold(),
         ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -301,12 +295,9 @@ fn value(s: &str) -> Span<'static> {
 fn polling_rate_title(interval: std::time::Duration) -> Line<'static> {
     let ms = interval.as_millis();
     Line::from(vec![
-        Span::styled(" - ", Style::new().fg(Color::Cyan).bold()),
-        Span::styled(
-            format!("{ms}ms"),
-            Style::new().fg(Color::White).bold(),
-        ),
-        Span::styled(" + ", Style::new().fg(Color::Cyan).bold()),
+        Span::styled(" - ", Style::new().fg(Color::Cyan)),
+        Span::styled(format!("{ms}ms"), Style::new().fg(Color::White).bold()),
+        Span::styled(" + ", Style::new().fg(Color::Cyan)),
     ])
     .right_aligned()
 }

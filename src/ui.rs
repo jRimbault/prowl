@@ -9,7 +9,7 @@ mod tree;
 use crate::app::App;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Spacing},
 };
 
 /// Render a full terminal frame.
@@ -18,8 +18,9 @@ use ratatui::{
 /// `app.visible_rows` so scroll synchronisation in `App` knows how many
 /// rows are currently on screen.
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let [header_area, tree_area] =
-        Layout::vertical([Constraint::Length(9), Constraint::Fill(1)]).areas(frame.area());
+    let [header_area, tree_area] = Layout::vertical([Constraint::Length(9), Constraint::Fill(1)])
+        .spacing(Spacing::Overlap(1))
+        .areas(frame.area());
 
     header::render_header(frame, app, header_area);
     tree::render_tree(frame, app, tree_area);

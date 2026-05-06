@@ -12,6 +12,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
+    symbols::merge::MergeStrategy,
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Row, Table},
 };
@@ -106,7 +107,7 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     if cols.state_full {
         header_cells.push(Cell::new("STATE"));
-        widths.push(Constraint::Length(11));
+        widths.push(Constraint::Length(9));
     } else {
         header_cells.push(Cell::new("S"));
         widths.push(Constraint::Length(3));
@@ -167,9 +168,9 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
                 }));
             }
             if cols.state_full {
-                cells.push(Cell::new(format!(" {:<9}", format::state_word(fr.state()))));
+                cells.push(Cell::new(format!("{:<9}", format::state_word(fr.state()))));
             } else {
-                cells.push(Cell::new(format!(" {} ", fr.state())));
+                cells.push(Cell::new(format!("{} ", fr.state())));
             }
             cells.push(
                 Cell::new(format!("{:>4.1}", fr.cpu_pct().value()))
@@ -203,25 +204,23 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut footer_hints = [
         Line::from(Vec::from([
-            Span::styled(" q/Esc", Style::new().fg(Color::White).bold()),
-            Span::styled(" quit ", Style::new().fg(Color::DarkGray)),
+            Span::styled(" Esc", Style::new().fg(Color::Cyan)),
+            Span::styled("/", Style::new().fg(Color::White)),
+            Span::styled("q", Style::new().fg(Color::Cyan)),
+            Span::styled("uit ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" ↑", Style::new().fg(Color::White).bold()),
-            Span::styled(" nav ", Style::new().fg(Color::DarkGray)),
-            Span::styled("↓ ", Style::new().fg(Color::White).bold()),
+            Span::styled(" ↑", Style::new().fg(Color::Cyan)),
+            Span::styled(" nav ", Style::new().fg(Color::White)),
+            Span::styled("↓ ", Style::new().fg(Color::Cyan)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" ⏎", Style::new().fg(Color::White).bold()),
-            Span::styled(" collapse ", Style::new().fg(Color::DarkGray)),
+            Span::styled(" ⏎", Style::new().fg(Color::Cyan)),
+            Span::styled(" collapse ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" t", Style::new().fg(Color::White).bold()),
-            Span::styled(" threads ", Style::new().fg(Color::DarkGray)),
-        ])),
-        Line::from(Vec::from([
-            Span::styled(" +/-", Style::new().fg(Color::White).bold()),
-            Span::styled(" rate ", Style::new().fg(Color::DarkGray)),
+            Span::styled(" t", Style::new().fg(Color::Cyan)),
+            Span::styled("hreads ", Style::new().fg(Color::White)),
         ])),
     ]
     .into_iter();
@@ -233,7 +232,7 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(Color::DarkGray))
-                .title_bottom(footer_hints.next().unwrap())
+                .merge_borders(MergeStrategy::Fuzzy)
                 .title_bottom(footer_hints.next().unwrap())
                 .title_bottom(footer_hints.next().unwrap())
                 .title_bottom(footer_hints.next().unwrap())
