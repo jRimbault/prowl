@@ -22,6 +22,11 @@ const INTERVAL_STEP_MS: u64 = 100;
 const INTERVAL_MIN_MS: u64 = 100;
 const INTERVAL_MAX_MS: u64 = 60_000;
 
+/// Number of characters shifted per Left/Right keypress in the tree view.
+/// Tuned so a long command line scrolls into view in a few presses without
+/// requiring tedious one-char-at-a-time stepping.
+const H_SCROLL_STEP: usize = 4;
+
 /// Bounded ring buffer of `Percent` samples for sparkline graphs.
 pub struct History {
     values: VecDeque<Percent>,
@@ -87,6 +92,10 @@ pub struct App {
     /// the collector through a watch channel; UI shows the value in the
     /// header's top-right title.
     interval: Duration,
+    /// Horizontal scroll offset (in characters) applied to the Command column.
+    /// The renderer clamps this each frame to a maximum derived from the
+    /// longest visible row, so input handlers can grow the value freely.
+    h_scroll: usize,
 }
 
 impl App {
@@ -105,6 +114,7 @@ impl App {
             mem_history: History::new(HISTORY_CAPACITY),
             cpu_count: cpu_count.max(1),
             interval: clamp_interval(interval),
+            h_scroll: 0,
         }
     }
 
@@ -150,6 +160,31 @@ impl App {
 
     pub fn interval(&self) -> Duration {
         self.interval
+    }
+
+    pub fn h_scroll(&self) -> usize {
+        self.h_scroll
+    }
+
+    /// Shift the command column rightward (text moves left under the
+    /// viewport).  Saturates at the top of the configured range; the
+    /// renderer applies a per-frame upper bound based on visible content.
+    pub fn scroll_right(&mut self) {
+        self.h_scroll = self.h_scroll.saturating_add(H_SCROLL_STEP);
+    }
+
+    /// Shift the command column leftward (text moves right under the
+    /// viewport).  Saturates at zero.
+    pub fn scroll_left(&mut self) {
+        self.h_scroll = self.h_scroll.saturating_sub(H_SCROLL_STEP);
+    }
+
+    /// Cap `h_scroll` to a renderer-supplied maximum offset.  Prevents the
+    /// view from scrolling past the longest visible command line.
+    pub fn clamp_h_scroll(&mut self, max: usize) {
+        if self.h_scroll > max {
+            self.h_scroll = max;
+        }
     }
 
     /// Increase the sampling interval by one step (slower polling).
@@ -224,6 +259,32 @@ impl App {
         self.sync_scroll();
     }
 
+    /// Jump the selection to the first visible row.
+    pub fn move_to_top(&mut self) {
+        self.selected = 0;
+        self.sync_scroll();
+    }
+
+    /// Jump the selection to the last visible row.
+    pub fn move_to_bottom(&mut self) {
+        if !self.flat_rows.is_empty() {
+            self.selected = self.flat_rows.len() - 1;
+        }
+        self.sync_scroll();
+    }
+
+    /// Reset the horizontal scroll to the leftmost position.
+    pub fn scroll_to_start(&mut self) {
+        self.h_scroll = 0;
+    }
+
+    /// Park the horizontal scroll at the rightmost position by overshooting;
+    /// the next frame's `clamp_h_scroll` reduces this to the actual maximum
+    /// derived from the longest visible command line.
+    pub fn scroll_to_end(&mut self) {
+        self.h_scroll = usize::MAX;
+    }
+
     /// Toggle thread visibility using the already-cached snapshot — no refresh needed.
     pub fn toggle_threads(&mut self) {
         self.show_threads = !self.show_threads;
@@ -272,4 +333,76 @@ impl App {
 fn clamp_interval(d: Duration) -> Duration {
     let ms = (d.as_millis() as u64).clamp(INTERVAL_MIN_MS, INTERVAL_MAX_MS);
     Duration::from_millis(ms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> App {
+        App::new(false, 8, Duration::from_millis(1000))
+    }
+
+    #[test]
+    fn h_scroll_starts_at_zero() {
+        assert_eq!(fixture().h_scroll(), 0);
+    }
+
+    #[test]
+    fn scroll_left_at_zero_does_not_underflow() {
+        let mut app = fixture();
+        app.scroll_left();
+        assert_eq!(app.h_scroll(), 0);
+    }
+
+    #[test]
+    fn scroll_right_advances_by_step() {
+        let mut app = fixture();
+        app.scroll_right();
+        assert_eq!(app.h_scroll(), H_SCROLL_STEP);
+    }
+
+    #[test]
+    fn scroll_left_after_right_returns_to_zero() {
+        let mut app = fixture();
+        app.scroll_right();
+        app.scroll_left();
+        assert_eq!(app.h_scroll(), 0);
+    }
+
+    #[test]
+    fn clamp_h_scroll_caps_above_max() {
+        let mut app = fixture();
+        app.scroll_right();
+        app.scroll_right();
+        app.clamp_h_scroll(2);
+        assert_eq!(app.h_scroll(), 2);
+    }
+
+    #[test]
+    fn clamp_h_scroll_leaves_value_below_max_untouched() {
+        let mut app = fixture();
+        app.scroll_right();
+        app.clamp_h_scroll(usize::MAX);
+        assert_eq!(app.h_scroll(), H_SCROLL_STEP);
+    }
+
+    #[test]
+    fn scroll_to_start_resets_offset() {
+        let mut app = fixture();
+        app.scroll_right();
+        app.scroll_right();
+        app.scroll_to_start();
+        assert_eq!(app.h_scroll(), 0);
+    }
+
+    #[test]
+    fn scroll_to_end_overshoots_then_clamps() {
+        let mut app = fixture();
+        app.scroll_to_end();
+        // Without a renderer in the loop, simulate the clamp the renderer
+        // performs each frame to verify the overshoot collapses cleanly.
+        app.clamp_h_scroll(42);
+        assert_eq!(app.h_scroll(), 42);
+    }
 }

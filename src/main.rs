@@ -16,7 +16,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use crossterm::{
     cursor,
-    event::{Event, EventStream, KeyCode, KeyEventKind},
+    event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -149,8 +149,26 @@ async fn main() -> anyhow::Result<()> {
                         match key.code {
                             KeyCode::Char('q') => break,
                             KeyCode::Esc => break,
+                            // Ctrl+arrow jumps to the corresponding extremity;
+                            // plain arrows step by one. The Ctrl variants are
+                            // matched first so the unmodified arms only fire
+                            // when no modifier is held.
+                            KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.move_to_top()
+                            }
+                            KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.move_to_bottom()
+                            }
+                            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.scroll_to_start()
+                            }
+                            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.scroll_to_end()
+                            }
                             KeyCode::Up => app.move_up(),
                             KeyCode::Down => app.move_down(),
+                            KeyCode::Left => app.scroll_left(),
+                            KeyCode::Right => app.scroll_right(),
                             KeyCode::Char('t') => app.toggle_threads(),
                             KeyCode::Enter => app.toggle_collapse(),
                             // `+` and `=` both bound so the user does not have

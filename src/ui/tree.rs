@@ -131,6 +131,50 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let header = Row::new(header_cells).style(Style::new().fg(Color::White));
 
+    // Compose the full Command-column string for each visible row up front.
+    // Done before clamping the horizontal scroll because the longest of
+    // these strings determines the maximum valid scroll offset.
+    let composed_cmds: Vec<String> = app
+        .flat_rows()
+        .iter()
+        .map(|fr| {
+            let collapse_marker = if fr.has_children() {
+                if fr.is_collapsed() { "▸ " } else { "▾ " }
+            } else {
+                ""
+            };
+            format!("{}{}{}", fr.connector(), collapse_marker, fr.cmdline())
+        })
+        .collect();
+
+    // Derive the Command column's pixel/cell width from the constraint list:
+    // sum the fixed-length columns and the inter-column spacing, then
+    // subtract from the table's inner width.  Using the same Vec we feed to
+    // ratatui keeps this number consistent with the layout it produces.
+    let fixed_widths_sum: u16 = widths
+        .iter()
+        .filter_map(|c| match c {
+            Constraint::Length(n) => Some(*n),
+            _ => None,
+        })
+        .sum();
+    let spacing_total: u16 = (widths.len() as u16).saturating_sub(1);
+    let cmd_width = inner_width
+        .saturating_sub(fixed_widths_sum)
+        .saturating_sub(spacing_total) as usize;
+
+    // Clamp the horizontal scroll so we never scroll past the longest visible
+    // line.  Input handlers grow `h_scroll` freely; this is the single point
+    // where it is bounded against actual content.
+    let max_cmd_len = composed_cmds
+        .iter()
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(0);
+    let max_h_scroll = max_cmd_len.saturating_sub(cmd_width);
+    app.clamp_h_scroll(max_h_scroll);
+    let h_scroll = app.h_scroll();
+
     let selected = app.selected();
     let rows: Vec<Row> = app
         .flat_rows()
@@ -140,12 +184,9 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
             let is_selected = i == selected;
             let cpu_color = fr.cpu_pct().color_scaled(app.cpu_count() as f64 * 100.0);
 
-            let collapse_marker = if fr.has_children() {
-                if fr.is_collapsed() { "▸ " } else { "▾ " }
-            } else {
-                ""
-            };
-            let cmd = format!("{}{}{}", fr.connector(), collapse_marker, fr.cmdline());
+            // Char-skip (not byte-slice) so multibyte characters in command
+            // lines don't panic the slice operation.
+            let cmd: String = composed_cmds[i].chars().skip(h_scroll).collect();
 
             let base_style = if is_selected {
                 Style::new()
@@ -210,9 +251,8 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled("uit ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" ↑", Style::new().fg(Color::Cyan)),
+            Span::styled(" ←↑↓→", Style::new().fg(Color::Cyan)),
             Span::styled(" nav ", Style::new().fg(Color::White)),
-            Span::styled("↓ ", Style::new().fg(Color::Cyan)),
         ])),
         Line::from(Vec::from([
             Span::styled(" ⏎", Style::new().fg(Color::Cyan)),
