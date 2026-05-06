@@ -8,8 +8,8 @@ name = "prowl"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1"
-clap = { version = "4", default-features = false, features = [
+anyhow = "1.0.102"
+clap = { version = "4.6.1", default-features = false, features = [
     "color",
     "derive",
     "error-context",
@@ -17,8 +17,8 @@ clap = { version = "4", default-features = false, features = [
     "std",
     "usage",
 ] }
-crossterm = { version = "0.29", features = ["event-stream"] }
-futures = { version = "0.3", default-features = false, features = ["std"] }
-procfs = { version = "0.18", features = ["chrono"] }
-ratatui = "0.30"
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+futures = { version = "0.3.32", default-features = false, features = ["std"] }
+procfs = { version = "0.18.0", features = ["chrono"] }
+ratatui = "0.30.0"
+tokio = { version = "1.52.2", features = ["macros", "rt", "sync", "time"] }
