@@ -34,7 +34,8 @@ impl SamplingState {
 
 pub async fn run(
     root_pid: Pid,
-    interval: std::time::Duration,
+    initial_interval: std::time::Duration,
+    mut interval_rx: watch::Receiver<std::time::Duration>,
     uid_map: Arc<HashMap<u32, String>>,
     tx: watch::Sender<Option<Tree>>,
 ) {
@@ -50,11 +51,27 @@ pub async fn run(
     );
 
     let mut state = SamplingState::new();
-    let mut ticker = time::interval(interval);
+    let mut ticker = time::interval(initial_interval);
     ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
     loop {
-        ticker.tick().await;
+        // Wait for either the next scheduled tick or a polling-rate change
+        // from the UI. A rate change rebuilds the ticker so the new cadence
+        // takes effect immediately.
+        tokio::select! {
+            _ = ticker.tick() => {}
+            result = interval_rx.changed() => {
+                match result {
+                    Err(_) => break,
+                    Ok(()) => {
+                        let new_interval = *interval_rx.borrow_and_update();
+                        ticker = time::interval(new_interval);
+                        ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+                        continue;
+                    }
+                }
+            }
+        }
 
         let elapsed_secs = state.elapsed_secs();
         let uid_map = Arc::clone(&uid_map);

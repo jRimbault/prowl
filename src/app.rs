@@ -4,7 +4,10 @@
 //! rolling metric history for sparklines, selection/scroll state, and display
 //! preferences.  All data collection lives in `collector`; all rendering in `ui`.
 
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    time::Duration,
+};
 
 use crate::{
     format::Percent,
@@ -13,6 +16,11 @@ use crate::{
 };
 
 const HISTORY_CAPACITY: usize = 200;
+
+/// Polling-rate adjustment bounds and step size for the +/- key bindings.
+const INTERVAL_STEP_MS: u64 = 100;
+const INTERVAL_MIN_MS: u64 = 100;
+const INTERVAL_MAX_MS: u64 = 60_000;
 
 /// Bounded ring buffer of `Percent` samples for sparkline graphs.
 pub struct History {
@@ -75,10 +83,14 @@ pub struct App {
     /// Total logical CPU count.  Aggregated CPU% can reach `cpu_count * 100`,
     /// so the UI uses this to scale traffic-light color thresholds.
     cpu_count: usize,
+    /// Current sampling interval, adjustable via the +/- keys.  Mirrored to
+    /// the collector through a watch channel; UI shows the value in the
+    /// header's top-right title.
+    interval: Duration,
 }
 
 impl App {
-    pub fn new(show_threads: bool, cpu_count: usize) -> Self {
+    pub fn new(show_threads: bool, cpu_count: usize, interval: Duration) -> Self {
         Self {
             root: None,
             name: String::new(),
@@ -92,6 +104,7 @@ impl App {
             cpu_history: History::new(HISTORY_CAPACITY),
             mem_history: History::new(HISTORY_CAPACITY),
             cpu_count: cpu_count.max(1),
+            interval: clamp_interval(interval),
         }
     }
 
@@ -133,6 +146,37 @@ impl App {
 
     pub fn cpu_count(&self) -> usize {
         self.cpu_count
+    }
+
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// Increase the sampling interval by one step (slower polling).
+    /// Returns `true` if the value changed.
+    pub fn step_interval_up(&mut self) -> bool {
+        let next_ms = (self.interval.as_millis() as u64).saturating_add(INTERVAL_STEP_MS);
+        let new = Duration::from_millis(next_ms.min(INTERVAL_MAX_MS));
+        if new != self.interval {
+            self.interval = new;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Decrease the sampling interval by one step (faster polling).
+    /// Returns `true` if the value changed.
+    pub fn step_interval_down(&mut self) -> bool {
+        let current_ms = self.interval.as_millis() as u64;
+        let next_ms = current_ms.saturating_sub(INTERVAL_STEP_MS);
+        let new = Duration::from_millis(next_ms.max(INTERVAL_MIN_MS));
+        if new != self.interval {
+            self.interval = new;
+            true
+        } else {
+            false
+        }
     }
 
     // --- Mutable accessors for ratatui stateful widget rendering ---
@@ -221,4 +265,11 @@ impl App {
         }
         self.table_state.select(Some(self.selected));
     }
+}
+
+/// Clamp an arbitrary CLI-supplied interval into the supported range so the
+/// initial value matches what +/- can later produce.
+fn clamp_interval(d: Duration) -> Duration {
+    let ms = (d.as_millis() as u64).clamp(INTERVAL_MIN_MS, INTERVAL_MAX_MS);
+    Duration::from_millis(ms)
 }

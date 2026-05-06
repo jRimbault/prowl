@@ -98,10 +98,19 @@ async fn main() -> anyhow::Result<()> {
     let cpu_count = std::thread::available_parallelism()
         .map(std::num::NonZero::get)
         .unwrap_or(1);
-    let mut app = app::App::new(args.threads, cpu_count);
+    let mut app = app::App::new(args.threads, cpu_count, args.interval);
 
     let (tx, mut rx) = watch::channel(None::<process::Tree>);
-    tokio::spawn(collector::run(pid, args.interval, uid_map, tx));
+    // Polling-rate channel: the UI publishes new intervals (via +/-) and the
+    // collector rebuilds its ticker on receipt.
+    let (interval_tx, interval_rx) = watch::channel(app.interval());
+    tokio::spawn(collector::run(
+        pid,
+        app.interval(),
+        interval_rx,
+        uid_map,
+        tx,
+    ));
 
     // Block until the first snapshot arrives so the first TUI frame is populated.
     rx.changed()
@@ -144,6 +153,19 @@ async fn main() -> anyhow::Result<()> {
                             KeyCode::Down => app.move_down(),
                             KeyCode::Char('t') => app.toggle_threads(),
                             KeyCode::Enter => app.toggle_collapse(),
+                            // `+` and `=` both bound so the user does not have
+                            // to hold Shift on US-style keyboards. `-` is the
+                            // sole minus key.
+                            KeyCode::Char('+') | KeyCode::Char('=') => {
+                                if app.step_interval_up() {
+                                    let _ = interval_tx.send(app.interval());
+                                }
+                            }
+                            KeyCode::Char('-') => {
+                                if app.step_interval_down() {
+                                    let _ = interval_tx.send(app.interval());
+                                }
+                            }
                             _ => {}
                         }
                     }

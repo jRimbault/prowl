@@ -13,9 +13,10 @@ Omit the PID to launch an interactive process picker.
 
 ## Keys
 
-| Key         | Action                        |
-| :---------- | :---------------------------- |
-| `q` / `Esc` | Quit                          |
-| `↑` / `↓`   | Navigate the tree             |
-| `Enter`     | Collapse / expand the subtree |
-| `t`         | Toggle thread visibility      |
+| Key         | Action                               |
+| :---------- | :----------------------------------- |
+| `q` / `Esc` | Quit                                 |
+| `↑` / `↓`   | Navigate the tree                    |
+| `Enter`     | Collapse / expand the subtree        |
+| `t`         | Toggle thread visibility             |
+| `+` / `-`   | Slow down / speed up polling (100ms) |

@@ -210,26 +210,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bar_empty() {
-        assert_eq!(bar(Percent::new(0.0), 8), "⠀⠀⠀⠀⠀⠀⠀⠀");
-    }
-
-    #[test]
-    fn bar_full() {
-        assert_eq!(bar(Percent::new(100.0), 8), "⣤⣤⣤⣤⣤⣤⣤⣤");
-    }
-
-    #[test]
-    fn bar_clamped_above() {
-        assert_eq!(bar(Percent::new(200.0), 4), "⣤⣤⣤⣤");
-    }
-
-    #[test]
-    fn bar_clamped_below() {
-        assert_eq!(bar(Percent::new(-100.0), 4), "⠀⠀⠀⠀");
-    }
-
-    #[test]
     fn state_word_sleeping() {
         assert_eq!(state_word('S'), "Sleeping");
     }

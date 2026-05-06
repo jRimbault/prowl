@@ -50,7 +50,8 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         .title(Span::styled(
             format!(" {} ", root.name()),
             Style::new().fg(Color::White).bold(),
-        ));
+        ))
+        .title(polling_rate_title(app.interval()));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -293,4 +294,19 @@ fn label(s: &str) -> Span<'static> {
 
 fn value(s: &str) -> Span<'static> {
     Span::styled(s.to_owned(), Style::new().fg(Color::White).bold())
+}
+
+/// btop-style polling-rate indicator placed in the header block's top-right
+/// title slot.  The `-` and `+` glyphs hint at their `+`/`-` key bindings.
+fn polling_rate_title(interval: std::time::Duration) -> Line<'static> {
+    let ms = interval.as_millis();
+    Line::from(vec![
+        Span::styled(" - ", Style::new().fg(Color::Cyan).bold()),
+        Span::styled(
+            format!("{ms}ms"),
+            Style::new().fg(Color::White).bold(),
+        ),
+        Span::styled(" + ", Style::new().fg(Color::Cyan).bold()),
+    ])
+    .right_aligned()
 }

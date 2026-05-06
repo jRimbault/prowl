@@ -210,6 +210,8 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(" collapse ", Style::new().fg(Color::DarkGray)),
         Span::styled("t", Style::new().fg(Color::White).bold()),
         Span::styled(" threads ", Style::new().fg(Color::DarkGray)),
+        Span::styled("+/-", Style::new().fg(Color::White).bold()),
+        Span::styled(" rate ", Style::new().fg(Color::DarkGray)),
     ]);
 
     let table = Table::new(rows, widths)
