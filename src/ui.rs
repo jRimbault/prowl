@@ -14,9 +14,6 @@ use ratatui::{
     layout::{Constraint, Layout, Spacing},
 };
 
-/// Height of the detail panel block (includes top/bottom borders).
-const DETAIL_HEIGHT: u16 = 10;
-
 /// Render a full terminal frame.
 ///
 /// `app` is mutably borrowed because the tree renderer updates
@@ -24,10 +21,14 @@ const DETAIL_HEIGHT: u16 = 10;
 /// rows are currently on screen.
 pub fn render(frame: &mut Frame, app: &mut App) {
     if app.detail_pid().is_some() {
+        // Thread vs process layouts differ in vertical density, so the
+        // detail block height is chosen by the panel rather than fixed
+        // at the call site.
+        let detail_h = detail::detail_height(app);
         let [header_area, tree_area, detail_area] = Layout::vertical([
             Constraint::Length(9),
             Constraint::Fill(1),
-            Constraint::Length(DETAIL_HEIGHT),
+            Constraint::Length(detail_h),
         ])
         .spacing(Spacing::Overlap(1))
         .areas(frame.area());

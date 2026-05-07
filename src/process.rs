@@ -547,22 +547,102 @@ fn collect_threads(
         .collect()
 }
 
+/// Linux scheduling policy.
+///
+/// Mirrors the small set of `SCHED_*` constants exposed via
+/// `/proc/<pid>/stat`'s `policy` field.  Unknown values keep the raw integer
+/// for diagnostic display.
+#[derive(Copy, Clone, Debug)]
+pub enum SchedPolicy {
+    Normal,
+    Fifo,
+    RoundRobin,
+    Batch,
+    Idle,
+    Deadline,
+    Unknown(u32),
+}
+
+impl SchedPolicy {
+    fn from_raw(raw: u32) -> Self {
+        // Values come from <linux/sched.h>; SCHED_NORMAL=0, FIFO=1, RR=2,
+        // BATCH=3, IDLE=5, DEADLINE=6.  Held in the kernel's `policy` field
+        // of /proc/<pid>/stat.
+        match raw {
+            0 => Self::Normal,
+            1 => Self::Fifo,
+            2 => Self::RoundRobin,
+            3 => Self::Batch,
+            5 => Self::Idle,
+            6 => Self::Deadline,
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            Self::Normal => "OTHER".to_owned(),
+            Self::Fifo => "FIFO".to_owned(),
+            Self::RoundRobin => "RR".to_owned(),
+            Self::Batch => "BATCH".to_owned(),
+            Self::Idle => "IDLE".to_owned(),
+            Self::Deadline => "DEADLINE".to_owned(),
+            Self::Unknown(raw) => format!("?({raw})"),
+        }
+    }
+}
+
 /// Detailed information about a single process or thread, fetched on-demand
 /// when the user opens the detail panel.
+///
+/// `is_thread` selects between two renderer layouts: the process layout
+/// shows process-wide context (memory, FDs, environ, cgroup) while the
+/// thread layout drops those fields (they belong to the parent process)
+/// and emphasises per-task scheduling and activity counters.
 pub struct ProcessDetail {
-    #[allow(dead_code)]
     pub pid: Pid,
+    /// True when this PID is a non-leader thread (`tgid != pid`).
+    pub is_thread: bool,
+    /// Thread group ID — equals the parent process's PID for threads.
+    pub tgid: Pid,
+    pub state: char,
     pub exe: Option<String>,
     pub cwd: Option<String>,
     pub fd_count: usize,
+    /// Soft `RLIMIT_NOFILE` (None for unlimited / unknown).
+    pub fd_soft_limit: Option<u64>,
     /// Environment variables as (key, value) pairs, sorted by key.
     pub environ: Vec<(String, String)>,
     pub nice: i64,
     pub priority: i64,
-    pub vm_peak_kb: Option<u64>,
+    pub policy: Option<SchedPolicy>,
+    pub rt_priority: Option<u32>,
+    /// Last logical CPU the task ran on.
+    pub last_cpu: Option<i32>,
+    /// Resident-set high water mark — peak resident memory, more meaningful
+    /// than `VmPeak` (which is the peak *virtual* size).
+    pub vm_hwm_kb: Option<u64>,
+    pub vm_size_kb: Option<u64>,
     pub vm_rss_kb: Option<u64>,
+    pub vm_data_kb: Option<u64>,
+    pub vm_stack_kb: Option<u64>,
+    pub vm_swap_kb: Option<u64>,
     pub voluntary_ctxt_switches: Option<u64>,
     pub nonvoluntary_ctxt_switches: Option<u64>,
+    /// Minor page faults — page reclaims that did not require disk I/O.
+    pub minor_faults: u64,
+    /// Major page faults — required reading a page from disk; high values
+    /// indicate memory pressure or first-touch.
+    pub major_faults: u64,
+    pub user_cpu_time: Duration,
+    pub system_cpu_time: Duration,
+    /// Kernel function the task is sleeping in, when applicable.
+    pub wchan: Option<String>,
+    pub oom_score: Option<u16>,
+    pub oom_score_adj: Option<i16>,
+    pub thread_count: Option<u64>,
+    /// First non-empty cgroup path from `/proc/<pid>/cgroup`.
+    pub cgroup: Option<String>,
 }
 
 /// Collect detailed per-process information for the detail panel.
@@ -571,49 +651,125 @@ pub struct ProcessDetail {
 /// that are too expensive or too verbose to include in every tree row.
 /// Called only when the panel is open, never during background sampling.
 pub fn collect_detail(pid: Pid) -> anyhow::Result<ProcessDetail> {
+    // Threads also have `/proc/<tid>` entries; procfs::Process accepts both.
     let proc = Process::new(pid.get())?;
     let stat = proc.stat()?;
+    let status = proc.status().ok();
 
+    let tgid = status.as_ref().map(|s| Pid::new(s.tgid)).unwrap_or(pid);
+    let is_thread = tgid != pid;
+
+    let ticks = procfs::ticks_per_second().max(1);
+    let user_cpu_time = Duration::from_secs_f64(stat.utime as f64 / ticks as f64);
+    let system_cpu_time = Duration::from_secs_f64(stat.stime as f64 / ticks as f64);
+
+    // Thread-local fields fall back gracefully — exe()/cwd()/environ() may
+    // return permission errors for processes owned by other users.
     let exe = proc.exe().ok().map(|p| p.to_string_lossy().into_owned());
     let cwd = proc.cwd().ok().map(|p| p.to_string_lossy().into_owned());
-    // fd_count reads only the count without allocating descriptors.
     let fd_count = proc.fd_count().unwrap_or(0);
-
-    let mut environ: Vec<(String, String)> = proc
-        .environ()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                k.to_string_lossy().into_owned(),
-                v.to_string_lossy().into_owned(),
-            )
-        })
-        .collect();
-    environ.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-    let status = proc.status();
-    let vm_peak_kb = status.as_ref().ok().and_then(|s| s.vmpeak);
-    let vm_rss_kb = status.as_ref().ok().and_then(|s| s.vmrss);
-    let voluntary_ctxt_switches = status.as_ref().ok().and_then(|s| s.voluntary_ctxt_switches);
-    let nonvoluntary_ctxt_switches = status
-        .as_ref()
+    let fd_soft_limit = proc
+        .limits()
         .ok()
-        .and_then(|s| s.nonvoluntary_ctxt_switches);
+        .and_then(|l| limit_value_to_u64(&l.max_open_files.soft_limit));
+
+    // Environ is irrelevant for threads (shared with the parent process)
+    // and can be expensive to read; skip for threads.
+    let environ = if is_thread {
+        Vec::new()
+    } else {
+        let mut env: Vec<(String, String)> = proc
+            .environ()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        env.sort_by(|(a, _), (b, _)| a.cmp(b));
+        env
+    };
+
+    let vm_hwm_kb = status.as_ref().and_then(|s| s.vmhwm);
+    let vm_rss_kb = status.as_ref().and_then(|s| s.vmrss);
+    let vm_size_kb = status.as_ref().and_then(|s| s.vmsize);
+    let vm_data_kb = status.as_ref().and_then(|s| s.vmdata);
+    let vm_stack_kb = status.as_ref().and_then(|s| s.vmstk);
+    let vm_swap_kb = status.as_ref().and_then(|s| s.vmswap);
+    let voluntary_ctxt_switches = status.as_ref().and_then(|s| s.voluntary_ctxt_switches);
+    let nonvoluntary_ctxt_switches = status.as_ref().and_then(|s| s.nonvoluntary_ctxt_switches);
+    let thread_count = status.as_ref().map(|s| s.threads);
+
+    // wchan returns "0" or empty when the task is running; squash both into
+    // None so the renderer can show a placeholder.
+    let wchan = proc
+        .wchan()
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty() && s != "0");
+
+    let oom_score = proc.oom_score().ok();
+    let oom_score_adj = proc.oom_score_adj().ok();
+
+    let cgroup = read_first_cgroup_path(pid);
 
     Ok(ProcessDetail {
         pid,
+        is_thread,
+        tgid,
+        state: stat.state,
         exe,
         cwd,
         fd_count,
+        fd_soft_limit,
         environ,
         nice: stat.nice,
         priority: stat.priority,
-        vm_peak_kb,
+        policy: stat.policy.map(SchedPolicy::from_raw),
+        rt_priority: stat.rt_priority,
+        last_cpu: stat.processor,
+        vm_hwm_kb,
+        vm_size_kb,
         vm_rss_kb,
+        vm_data_kb,
+        vm_stack_kb,
+        vm_swap_kb,
         voluntary_ctxt_switches,
         nonvoluntary_ctxt_switches,
+        minor_faults: stat.minflt,
+        major_faults: stat.majflt,
+        user_cpu_time,
+        system_cpu_time,
+        wchan,
+        oom_score,
+        oom_score_adj,
+        thread_count,
+        cgroup,
     })
+}
+
+/// Translate a procfs `LimitValue` into a plain `Option<u64>` (None = unlimited).
+fn limit_value_to_u64(v: &procfs::process::LimitValue) -> Option<u64> {
+    match v {
+        procfs::process::LimitValue::Value(n) => Some(*n),
+        procfs::process::LimitValue::Unlimited => None,
+    }
+}
+
+/// Read `/proc/<pid>/cgroup` and return the first non-empty cgroup path.
+///
+/// Cgroup v2 emits a single `0::<path>` line; v1 emits one line per
+/// controller.  Either way, the path component (after the second colon)
+/// is enough to identify what slice / scope / container the task lives in.
+fn read_first_cgroup_path(pid: Pid) -> Option<String> {
+    let raw = fs::read_to_string(format!("/proc/{}/cgroup", pid.get())).ok()?;
+    raw.lines()
+        .filter_map(|line| line.splitn(3, ':').nth(2))
+        .find(|p| !p.is_empty() && *p != "/")
+        .map(str::to_owned)
 }
 
 /// Compute how long the process has been running.
