@@ -46,3 +46,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         tree::render_tree(frame, app, tree_area);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn renders_frame_without_detail() {
+        let mut app = test_support::make_app();
+        let frame = test_support::render(&mut app, 100, 24);
+        assert_snapshot!(frame);
+    }
+
+    #[test]
+    fn renders_frame_with_process_detail() {
+        let mut app = test_support::make_app_with_detail(test_support::make_process_detail());
+        let frame = test_support::render(&mut app, 100, 30);
+        assert_snapshot!(frame);
+    }
+
+    #[test]
+    fn renders_frame_with_thread_detail() {
+        let mut app = test_support::make_app_with_detail(test_support::make_thread_detail());
+        let frame = test_support::render(&mut app, 100, 28);
+        assert_snapshot!(frame);
+    }
+}

@@ -790,7 +790,9 @@ fn compute_elapsed(starttime: u64, ticks_per_second: u64) -> Duration {
 pub mod tests {
     use super::*;
 
-    fn push_child(parent: &mut Node, child: Node) {
+    /// Append a fully-formed child `Node` to a parent.  Used by builders
+    /// that need to construct grandchildren before attaching.
+    pub fn push_child(parent: &mut Node, child: Node) {
         parent.children.nodes.push(child);
     }
 
@@ -830,6 +832,47 @@ pub mod tests {
     /// Overwrite the `cpu_time` field of a `Node`.
     pub fn set_cpu_time(node: &mut Node, cpu_time: Duration) {
         node.cpu_time = cpu_time;
+    }
+
+    /// Overwrite the `user` field of a `Node`.
+    pub fn set_user(node: &mut Node, user: &str) {
+        node.user = user.to_owned();
+    }
+
+    /// Overwrite the `state` character of a `Node`.
+    pub fn set_state(node: &mut Node, state: char) {
+        node.state = state;
+    }
+
+    /// Overwrite the `cpu_pct` field of a `Node`.
+    pub fn set_cpu_pct(node: &mut Node, pct: f64) {
+        node.cpu_pct = Percent::new(pct);
+    }
+
+    /// Overwrite the resident memory of a `Node`.  `mem_pct` is left at zero;
+    /// callers can set it separately if a particular percentage matters.
+    pub fn set_mem_rss_bytes(node: &mut Node, bytes: u64) {
+        node.mem_rss_bytes = bytes;
+    }
+
+    /// Overwrite the memory percentage of a `Node`.
+    pub fn set_mem_pct(node: &mut Node, pct: f64) {
+        node.mem_pct = Percent::new(pct);
+    }
+
+    /// Overwrite the wall-clock elapsed time of a `Node`.
+    pub fn set_elapsed(node: &mut Node, d: Duration) {
+        node.elapsed = d;
+    }
+
+    /// Overwrite the cumulative I/O totals of a `Node`.
+    pub fn set_io(node: &mut Node, read: u64, write: u64) {
+        node.io = IoTotals::new(read, write);
+    }
+
+    /// Overwrite the parent-name field of a `Node`.
+    pub fn set_parent_name(node: &mut Node, name: &str) {
+        node.parent_name = name.to_owned();
     }
 
     #[test]

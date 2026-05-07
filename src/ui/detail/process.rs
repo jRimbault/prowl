@@ -256,3 +256,18 @@ fn render_environ_strip(frame: &mut Frame, environ: &[(String, String)], area: R
 fn sep() -> Span<'static> {
     Span::styled("  │  ", Style::new().fg(Color::DarkGray))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn renders_process_layout() {
+        let info = test_support::make_process_detail();
+        let frame = test_support::render_widget(100, 11, |frame, area| {
+            super::render(frame, &info, area);
+        });
+        assert_snapshot!(frame);
+    }
+}

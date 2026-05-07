@@ -1,0 +1,18 @@
+---
+source: src/ui/tree.rs
+expression: frame
+---
+"╭──────────────────────────────────────────────────────────╮"
+"│  PID    S   CPU%  Command                                │"
+"│   1234  R   12.3  ▾ /usr/bin/myapp --serve --port 8080   │"
+"│   1235  S    1.2  ├─ ▾ /usr/bin/myapp worker --queue task│"
+"│    200  S    0.0  │  └─ helper                           │"
+"│   1236  S    0.0  └─ /usr/bin/myapp logger               │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"╰ Esc/quit ─ ←↑↓→ nav ─ ␣ collapse ─ ⏎ detail ─ threads ───╯"

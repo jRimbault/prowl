@@ -1,0 +1,15 @@
+---
+source: src/ui/detail/process.rs
+expression: frame
+---
+"╭ Identity ──────────────────────┬ Memory ────────────────────────┬ Scheduler ─────────────────────╮"
+"│Exe:       /usr/bin/myapp       │Virtual:   800.8 MiB            │Policy:    OTHER                │"
+"│CWD:       /home/alice/projects/│Resident:  68.4 MiB             │Nice/Pri:  0 / 20               │"
+"│Cgroup:    /user.slice/user-1000│Peak RSS:  70.3 MiB             │Last CPU:  3                    │"
+"│Threads:   8                    │Heap:      39.1 MiB             │FDs:       42 / 1024            │"
+"│                                │Stack:     132.0 KiB            │OOM:       180 (+0)             │"
+"│                                │Swap:      0 B                  │                                │"
+"│                                │                                │                                │"
+"╰────────────────────────────────┴────────────────────────────────┴────────────────────────────────╯"
+" Wchan: running  │  Faults min/maj: 12.3k/7  │  Ctx v/n: 1.2k/56  │  CPU u+s: 00:00:11              "
+" env: SHELL=/bin/bash  HOME=/home/alice  USER=alice  LANG=en_US.UTF-8                               "

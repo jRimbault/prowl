@@ -140,3 +140,18 @@ fn render_activity(frame: &mut Frame, info: &ProcessDetail, area: Rect) {
         frame.render_widget(Paragraph::new(lines), area);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn renders_thread_layout() {
+        let info = test_support::make_thread_detail();
+        let frame = test_support::render_widget(100, 8, |frame, area| {
+            super::render(frame, &info, area);
+        });
+        assert_snapshot!(frame);
+    }
+}

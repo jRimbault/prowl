@@ -1,0 +1,12 @@
+---
+source: src/ui/detail/thread.rs
+expression: frame
+---
+"╭ Identity ──────────────────────┬ Scheduler ─────────────────────┬ Activity ──────────────────────╮"
+"│TID:       200                  │Policy:    OTHER                │Wchan:     futex_wait_queue     │"
+"│TGID:      1235                 │RT prio:   —                    │MinFlt:    64                   │"
+"│Nice:      0                    │Last CPU:  1                    │MajFlt:    0                    │"
+"│Priority:  20                   │User CPU:  00:00:01             │Ctx vol:   89                   │"
+"│                                │Sys CPU:   00:00:00             │Ctx nonvol:4                    │"
+"│                                │                                │                                │"
+"╰────────────────────────────────┴────────────────────────────────┴────────────────────────────────╯"

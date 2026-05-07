@@ -288,3 +288,29 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 
     frame.render_stateful_widget(table, area, app.table_state_mut());
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn renders_full_layout() {
+        // 120 wide → richest ColumnSet (USER + STATE word + RES + ELAPSED + CPUT).
+        let mut app = test_support::make_app();
+        let frame = test_support::render_widget(120, 14, |frame, area| {
+            super::render_tree(frame, &mut app, area);
+        });
+        assert_snapshot!(frame);
+    }
+
+    #[test]
+    fn renders_narrow_layout() {
+        // 60 wide → minimal ColumnSet (PID + STATE char + CPU% + Command).
+        let mut app = test_support::make_app();
+        let frame = test_support::render_widget(60, 14, |frame, area| {
+            super::render_tree(frame, &mut app, area);
+        });
+        assert_snapshot!(frame);
+    }
+}

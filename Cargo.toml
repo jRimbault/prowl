@@ -22,3 +22,8 @@ futures = { version = "0.3.32", default-features = false, features = ["std"] }
 procfs = { version = "0.18.0", features = ["chrono"] }
 ratatui = "0.30.0"
 tokio = { version = "1.52.2", features = ["macros", "rt", "sync", "time"] }
+
+[dev-dependencies]
+# Snapshot tests for ratatui rendering (see src/ui/**/tests).
+# Run `cargo insta review` to inspect and approve UI changes.
+insta = "1.40"

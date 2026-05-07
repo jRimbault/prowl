@@ -301,3 +301,18 @@ fn polling_rate_title(interval: std::time::Duration) -> Line<'static> {
     ])
     .right_aligned()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support;
+    use insta::assert_snapshot;
+
+    #[test]
+    fn renders_with_root() {
+        let app = test_support::make_app();
+        let frame = test_support::render_widget(100, 9, |frame, area| {
+            super::render_header(frame, &app, area);
+        });
+        assert_snapshot!(frame);
+    }
+}

@@ -32,6 +32,9 @@ mod process;
 mod tree;
 mod ui;
 
+#[cfg(test)]
+mod test_support;
+
 fn styles() -> clap::builder::Styles {
     use clap::builder::styling::{AnsiColor, Style};
     clap::builder::Styles::styled()
