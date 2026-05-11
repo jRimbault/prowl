@@ -304,6 +304,10 @@ pub fn load_uid_map() -> HashMap<u32, String> {
 /// Threads are always collected so the UI can toggle their visibility without
 /// waiting for the next refresh cycle.  The returned `Tree` owns the full
 /// hierarchy: root node first, child processes and threads as its children.
+///
+/// Performance: `/proc` is enumerated and stat'd exactly once per call to
+/// build a `ProcessIndex`.  The tree is then walked from `root_pid` using
+/// that index, avoiding the previous O(tree_size × proc_count) re-scans.
 pub fn collect_tree(
     root_pid: Pid,
     prev_ticks: &mut HashMap<Pid, u64>,
@@ -311,44 +315,139 @@ pub fn collect_tree(
     cfg: &SystemConfig,
     uid_map: &HashMap<u32, String>,
 ) -> anyhow::Result<Tree> {
-    let proc = Process::new(root_pid.get())?;
-    let stat = proc.stat()?;
-    let user = resolve_user(&proc, uid_map);
+    let index = scan_process_index()?;
+    let root_idx = index
+        .by_pid(root_pid.get())
+        .ok_or_else(|| anyhow::Error::from(procfs::ProcError::NotFound(None)))?;
+    let root = build_subtree(root_idx, &index, prev_ticks, elapsed_secs, cfg, uid_map)?;
+    Ok(Tree::from(root))
+}
 
-    Ok(std::iter::once(build_node(
+/// Lightweight per-process record kept in the in-memory index.
+///
+/// Holding only the `pid` and parsed `Stat` (not a `Process` handle) lets us
+/// drop the `/proc/<pid>` directory fd immediately after the scan, avoiding
+/// fd-limit pressure on systems with many processes.
+struct ProcSummary {
+    pid: i32,
+    stat: procfs::process::Stat,
+}
+
+/// One-shot snapshot of `/proc`, indexed for tree traversal.
+///
+/// Built by `scan_process_index` from a single `all_processes()` enumeration.
+/// `children_by_ppid` is the inverse adjacency map used to descend from
+/// `root_pid`; `by_pid` resolves parent-name lookups without an extra
+/// `Process::new` per node.
+struct ProcessIndex {
+    entries: Vec<ProcSummary>,
+    by_pid: HashMap<i32, usize>,
+    children_by_ppid: HashMap<i32, Vec<usize>>,
+}
+
+impl ProcessIndex {
+    fn by_pid(&self, pid: i32) -> Option<usize> {
+        self.by_pid.get(&pid).copied()
+    }
+
+    fn children(&self, pid: i32) -> &[usize] {
+        self.children_by_ppid
+            .get(&pid)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn comm(&self, pid: i32) -> Option<&str> {
+        self.by_pid(pid).map(|i| self.entries[i].stat.comm.as_str())
+    }
+}
+
+/// Enumerate `/proc` once, parsing `stat` for each process.
+///
+/// Process handles are dropped as we go so the resulting index holds no
+/// open file descriptors — only `pid` and `Stat` data.  Processes that
+/// vanish or fail to parse during the scan are silently skipped.
+fn scan_process_index() -> anyhow::Result<ProcessIndex> {
+    let entries: Vec<ProcSummary> = all_processes()?
+        .filter_map(|r| r.ok())
+        .filter_map(|p| {
+            let pid = p.pid();
+            let stat = p.stat().ok()?;
+            Some(ProcSummary { pid, stat })
+        })
+        .collect();
+
+    let mut by_pid: HashMap<i32, usize> = HashMap::with_capacity(entries.len());
+    let mut children_by_ppid: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        by_pid.insert(e.pid, i);
+        children_by_ppid.entry(e.stat.ppid).or_default().push(i);
+    }
+
+    Ok(ProcessIndex {
+        entries,
+        by_pid,
+        children_by_ppid,
+    })
+}
+
+/// Recursively assemble the subtree rooted at `entries[idx]` from the index.
+///
+/// Each node's stat is read from the index (no second `stat()` call), the
+/// parent name comes from an in-memory lookup, and the `Process` handle is
+/// reopened only for the fields that genuinely need a procfs file:
+/// `io`, `status`, `cmdline`, and `tasks`.
+fn build_subtree(
+    idx: usize,
+    index: &ProcessIndex,
+    prev_ticks: &mut HashMap<Pid, u64>,
+    elapsed_secs: f64,
+    cfg: &SystemConfig,
+    uid_map: &HashMap<u32, String>,
+) -> anyhow::Result<Node> {
+    let entry = &index.entries[idx];
+    let pid = Pid::new(entry.pid);
+    let proc = Process::new(entry.pid)?;
+    let user = resolve_user(&proc, uid_map);
+    let parent_name = index.comm(entry.stat.ppid).unwrap_or_default().to_owned();
+
+    let mut node = build_node(
         &proc,
-        &stat,
-        root_pid,
+        &entry.stat,
+        pid,
         &user,
+        parent_name,
         prev_ticks,
         elapsed_secs,
         cfg,
-    )?)
-    .chain(collect_child_processes(
-        root_pid,
-        prev_ticks,
-        elapsed_secs,
-        cfg,
-        uid_map,
-    )?)
-    .chain(collect_threads(
+    )?;
+
+    // Child processes first (preserves the previous ordering: children before threads).
+    for &cidx in index.children(entry.pid) {
+        if let Ok(child) = build_subtree(cidx, index, prev_ticks, elapsed_secs, cfg, uid_map) {
+            node.children.nodes.push(child);
+        }
+    }
+    node.children.nodes.extend(collect_threads(
         &proc,
-        root_pid,
+        pid,
         &user,
-        &stat,
+        &entry.stat,
         prev_ticks,
         elapsed_secs,
         cfg,
-    ))
-    .collect())
+    ));
+    Ok(node)
 }
 
 /// Assemble a single process `Node` from procfs data and sampled metrics.
+#[allow(clippy::too_many_arguments)]
 fn build_node(
     proc: &Process,
     stat: &procfs::process::Stat,
     pid: Pid,
     user: &str,
+    parent_name: String,
     prev_ticks: &mut HashMap<Pid, u64>,
     elapsed_secs: f64,
     cfg: &SystemConfig,
@@ -367,7 +466,7 @@ fn build_node(
         io: read_io_totals(proc)?,
         elapsed: compute_elapsed(stat.starttime, cfg.ticks_per_second()),
         cpu_time,
-        parent_name: lookup_parent_name(stat.ppid),
+        parent_name,
         children: Tree::default(),
         is_thread: false,
     })
@@ -459,43 +558,6 @@ fn read_cmdline(proc: &Process, stat: &procfs::process::Stat) -> String {
         .filter(|v| !v.is_empty())
         .map(|v| v.join(" "))
         .unwrap_or_else(|| stat.comm.clone())
-}
-
-/// Look up the parent process's short name for display context.
-///
-/// Returns an empty string if the parent has already exited.
-fn lookup_parent_name(ppid: i32) -> String {
-    Process::new(ppid)
-        .and_then(|p| p.stat())
-        .map(|s| s.comm)
-        .unwrap_or_default()
-}
-
-/// Recursively collect direct child processes of `parent_pid`.
-///
-/// Enumerates all processes via `/proc` and filters to those whose ppid
-/// matches.  Each child is itself collected as a full sub-tree.  Processes
-/// that vanish mid-collection are silently skipped.
-fn collect_child_processes(
-    parent_pid: Pid,
-    prev_ticks: &mut HashMap<Pid, u64>,
-    elapsed_secs: f64,
-    cfg: &SystemConfig,
-    uid_map: &HashMap<u32, String>,
-) -> anyhow::Result<Vec<Node>> {
-    Ok(all_processes()?
-        .filter_map(|r| r.ok())
-        .filter(|p| {
-            p.stat()
-                .map(|s| s.ppid == parent_pid.get())
-                .unwrap_or(false)
-        })
-        .filter_map(|p| {
-            collect_tree(Pid::new(p.pid()), prev_ticks, elapsed_secs, cfg, uid_map)
-                .ok()
-                .and_then(|t| t.nodes.into_iter().next())
-        })
-        .collect())
 }
 
 /// Collect the threads (tasks) belonging to a process.

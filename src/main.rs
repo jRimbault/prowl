@@ -21,19 +21,9 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::StreamExt as _;
+use prowl::{app, collector, picker, process, ui};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::{sync::watch, task};
-
-mod app;
-mod collector;
-mod format;
-mod picker;
-mod process;
-mod tree;
-mod ui;
-
-#[cfg(test)]
-mod test_support;
 
 fn styles() -> clap::builder::Styles {
     use clap::builder::styling::{AnsiColor, Style};
