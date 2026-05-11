@@ -5,6 +5,8 @@
 A Linux-only TUI that perches on a PID and silently watches its whole
 descendant tree, CPU, memory, threads, lineage.
 
+[![asciicast](https://asciinema.org/a/txpR2lr9w0tuG42z.svg)](https://asciinema.org/a/txpR2lr9w0tuG42z)
+
 ```shell
 prowl [pid] [--interval 1000] [--threads]
 ```
