@@ -5,7 +5,7 @@
 //! to UI concerns.  Runs procfs I/O on a blocking thread via `spawn_blocking`
 //! to avoid stalling the async runtime.
 
-use crate::process::{Pid, SystemConfig, Tree, collect_tree};
+use crate::process::{Pid, SamplingContext, SystemConfig, Tree, collect_tree};
 use procfs::Current as _;
 use std::{collections::HashMap, sync::Arc, time::Instant};
 use tokio::{sync::watch, task, time};
@@ -83,13 +83,9 @@ pub async fn run(
         };
 
         let outcome = task::spawn_blocking(move || {
-            let result = collect_tree(
-                root_pid,
-                &mut moved_state.prev_ticks,
-                elapsed_secs,
-                &cfg,
-                &uid_map,
-            );
+            let mut ctx =
+                SamplingContext::new(&mut moved_state.prev_ticks, elapsed_secs, &cfg, &uid_map);
+            let result = collect_tree(root_pid, &mut ctx);
             (result, moved_state)
         })
         .await;

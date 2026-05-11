@@ -299,6 +299,53 @@ pub fn load_uid_map() -> HashMap<u32, String> {
         .collect()
 }
 
+/// Per-tick state and configuration threaded through the sampling call chain.
+///
+/// Bundles together the four values that previously had to be passed as
+/// separate arguments to every sampling helper:
+/// * `prev_ticks` — mutable CPU-tick baselines (updated per call)
+/// * `elapsed_secs` — wall-clock seconds since the previous tick
+/// * `cfg` — immutable system constants (clock ticks/page size/RAM)
+/// * `uid_map` — `/etc/passwd` lookup table for user-name resolution
+///
+/// Constructed once per sampling iteration and passed by `&mut`; recursive
+/// callers reborrow it transparently.
+pub struct SamplingContext<'a> {
+    prev_ticks: &'a mut HashMap<Pid, u64>,
+    elapsed_secs: f64,
+    cfg: &'a SystemConfig,
+    uid_map: &'a HashMap<u32, String>,
+}
+
+impl<'a> SamplingContext<'a> {
+    pub fn new(
+        prev_ticks: &'a mut HashMap<Pid, u64>,
+        elapsed_secs: f64,
+        cfg: &'a SystemConfig,
+        uid_map: &'a HashMap<u32, String>,
+    ) -> Self {
+        Self {
+            prev_ticks,
+            elapsed_secs,
+            cfg,
+            uid_map,
+        }
+    }
+}
+
+/// View into a single process or thread being sampled.
+///
+/// Carries the three values (`proc` handle, parsed `stat`, strongly-typed
+/// `pid`) that always travel together when building a node or enumerating
+/// threads.  `Copy` so it can be passed to multiple helpers without
+/// reconstructing it at each call site.
+#[derive(Copy, Clone)]
+struct ProcessSample<'a> {
+    proc: &'a Process,
+    stat: &'a procfs::process::Stat,
+    pid: Pid,
+}
+
 /// Collect the process tree rooted at `root_pid`.
 ///
 /// Threads are always collected so the UI can toggle their visibility without
@@ -308,18 +355,12 @@ pub fn load_uid_map() -> HashMap<u32, String> {
 /// Performance: `/proc` is enumerated and stat'd exactly once per call to
 /// build a `ProcessIndex`.  The tree is then walked from `root_pid` using
 /// that index, avoiding the previous O(tree_size × proc_count) re-scans.
-pub fn collect_tree(
-    root_pid: Pid,
-    prev_ticks: &mut HashMap<Pid, u64>,
-    elapsed_secs: f64,
-    cfg: &SystemConfig,
-    uid_map: &HashMap<u32, String>,
-) -> anyhow::Result<Tree> {
+pub fn collect_tree(root_pid: Pid, ctx: &mut SamplingContext) -> anyhow::Result<Tree> {
     let index = scan_process_index()?;
     let root_idx = index
         .by_pid(root_pid.get())
         .ok_or_else(|| anyhow::Error::from(procfs::ProcError::NotFound(None)))?;
-    let root = build_subtree(root_idx, &index, prev_ticks, elapsed_secs, cfg, uid_map)?;
+    let root = build_subtree(root_idx, &index, ctx)?;
     Ok(Tree::from(root))
 }
 
@@ -400,71 +441,53 @@ fn scan_process_index() -> anyhow::Result<ProcessIndex> {
 fn build_subtree(
     idx: usize,
     index: &ProcessIndex,
-    prev_ticks: &mut HashMap<Pid, u64>,
-    elapsed_secs: f64,
-    cfg: &SystemConfig,
-    uid_map: &HashMap<u32, String>,
+    ctx: &mut SamplingContext,
 ) -> anyhow::Result<Node> {
     let entry = &index.entries[idx];
     let pid = Pid::new(entry.pid);
     let proc = Process::new(entry.pid)?;
-    let user = resolve_user(&proc, uid_map);
+    let user = resolve_user(&proc, ctx.uid_map);
     let parent_name = index.comm(entry.stat.ppid).unwrap_or_default().to_owned();
-
-    let mut node = build_node(
-        &proc,
-        &entry.stat,
+    let sample = ProcessSample {
+        proc: &proc,
+        stat: &entry.stat,
         pid,
-        &user,
-        parent_name,
-        prev_ticks,
-        elapsed_secs,
-        cfg,
-    )?;
+    };
+
+    let mut node = build_node(sample, &user, parent_name, ctx)?;
 
     // Child processes first (preserves the previous ordering: children before threads).
     for &cidx in index.children(entry.pid) {
-        if let Ok(child) = build_subtree(cidx, index, prev_ticks, elapsed_secs, cfg, uid_map) {
+        if let Ok(child) = build_subtree(cidx, index, ctx) {
             node.children.nodes.push(child);
         }
     }
-    node.children.nodes.extend(collect_threads(
-        &proc,
-        pid,
-        &user,
-        &entry.stat,
-        prev_ticks,
-        elapsed_secs,
-        cfg,
-    ));
+    node.children
+        .nodes
+        .extend(collect_threads(sample, &user, ctx));
     Ok(node)
 }
 
 /// Assemble a single process `Node` from procfs data and sampled metrics.
-#[allow(clippy::too_many_arguments)]
 fn build_node(
-    proc: &Process,
-    stat: &procfs::process::Stat,
-    pid: Pid,
+    sample: ProcessSample,
     user: &str,
     parent_name: String,
-    prev_ticks: &mut HashMap<Pid, u64>,
-    elapsed_secs: f64,
-    cfg: &SystemConfig,
+    ctx: &mut SamplingContext,
 ) -> anyhow::Result<Node> {
-    let (cpu_pct, cpu_time) = sample_task_cpu(pid, stat, prev_ticks, elapsed_secs, cfg);
-    let (mem_rss_bytes, mem_pct) = compute_memory(stat, cfg);
+    let (cpu_pct, cpu_time) = sample_task_cpu(sample.pid, sample.stat, ctx);
+    let (mem_rss_bytes, mem_pct) = compute_memory(sample.stat, ctx.cfg);
     Ok(Node {
-        pid,
-        name: stat.comm.clone(),
-        cmdline: read_cmdline(proc, stat),
+        pid: sample.pid,
+        name: sample.stat.comm.clone(),
+        cmdline: read_cmdline(sample.proc, sample.stat),
         user: user.to_owned(),
-        state: stat.state,
+        state: sample.stat.state,
         cpu_pct,
         mem_rss_bytes,
         mem_pct,
-        io: read_io_totals(proc)?,
-        elapsed: compute_elapsed(stat.starttime, cfg.ticks_per_second()),
+        io: read_io_totals(sample.proc)?,
+        elapsed: compute_elapsed(sample.stat.starttime, ctx.cfg.ticks_per_second()),
         cpu_time,
         parent_name,
         children: Tree::default(),
@@ -475,33 +498,26 @@ fn build_node(
 /// Compute CPU utilisation since the last sample for a single task.
 ///
 /// Returns the per-second CPU% and the total accumulated CPU time (utime +
-/// stime).  `prev_ticks` is updated in-place so the next call can compute
-/// a fresh delta.
+/// stime).  `ctx.prev_ticks` is updated in-place so the next call can
+/// compute a fresh delta.
 fn sample_task_cpu(
     pid: Pid,
     stat: &procfs::process::Stat,
-    prev_ticks: &mut HashMap<Pid, u64>,
-    elapsed_secs: f64,
-    cfg: &SystemConfig,
+    ctx: &mut SamplingContext,
 ) -> (Percent, Duration) {
-    sample_ticks(pid, stat.utime + stat.stime, prev_ticks, elapsed_secs, cfg)
+    sample_ticks(pid, stat.utime + stat.stime, ctx)
 }
 
-fn sample_ticks(
-    pid: Pid,
-    current_ticks: u64,
-    prev_ticks: &mut HashMap<Pid, u64>,
-    elapsed_secs: f64,
-    cfg: &SystemConfig,
-) -> (Percent, Duration) {
-    let delta = current_ticks.saturating_sub(*prev_ticks.get(&pid).unwrap_or(&current_ticks));
-    let cpu_pct = if elapsed_secs > 0.0 {
-        (delta as f64 / cfg.ticks_per_second() as f64) / elapsed_secs * 100.0
+fn sample_ticks(pid: Pid, current_ticks: u64, ctx: &mut SamplingContext) -> (Percent, Duration) {
+    let delta = current_ticks.saturating_sub(*ctx.prev_ticks.get(&pid).unwrap_or(&current_ticks));
+    let cpu_pct = if ctx.elapsed_secs > 0.0 {
+        (delta as f64 / ctx.cfg.ticks_per_second() as f64) / ctx.elapsed_secs * 100.0
     } else {
         0.0
     };
-    prev_ticks.insert(pid, current_ticks);
-    let cpu_time = Duration::from_secs_f64(current_ticks as f64 / cfg.ticks_per_second() as f64);
+    ctx.prev_ticks.insert(pid, current_ticks);
+    let cpu_time =
+        Duration::from_secs_f64(current_ticks as f64 / ctx.cfg.ticks_per_second() as f64);
     (Percent::new(cpu_pct), cpu_time)
 }
 
@@ -566,27 +582,22 @@ fn read_cmdline(proc: &Process, stat: &procfs::process::Stat) -> String {
 /// The main thread (tid == pid) is excluded since it is the process itself.
 /// Thread names are read from `/proc/<pid>/task/<tid>/comm` which provides
 /// the full name without the 15-character truncation of `stat.comm`.
-fn collect_threads(
-    proc: &Process,
-    pid: Pid,
-    user: &str,
-    stat: &procfs::process::Stat,
-    prev_ticks: &mut HashMap<Pid, u64>,
-    elapsed_secs: f64,
-    cfg: &SystemConfig,
-) -> Vec<Node> {
-    let Ok(tasks) = proc.tasks() else {
+fn collect_threads(parent: ProcessSample, user: &str, ctx: &mut SamplingContext) -> Vec<Node> {
+    let Ok(tasks) = parent.proc.tasks() else {
         return Vec::new();
     };
+    let parent_pid = parent.pid;
+    let parent_comm = parent.stat.comm.clone();
+    let page_size = ctx.cfg.page_size();
     tasks
         .filter_map(|r| r.ok())
-        .filter(|t| t.tid != pid.get())
+        .filter(|t| t.tid != parent_pid.get())
         .filter_map(|task| {
             let tstat = task.stat().ok()?;
             let tid = Pid::new(task.tid);
-            let (cpu_pct, cpu_time) = sample_task_cpu(tid, &tstat, prev_ticks, elapsed_secs, cfg);
+            let (cpu_pct, cpu_time) = sample_task_cpu(tid, &tstat, ctx);
             let thread_name =
-                fs::read_to_string(format!("/proc/{}/task/{}/comm", pid.get(), task.tid))
+                fs::read_to_string(format!("/proc/{}/task/{}/comm", parent_pid.get(), task.tid))
                     .map(|s| s.trim_end().to_owned())
                     .unwrap_or_else(|_| tstat.comm.clone());
             Some(Node {
@@ -596,12 +607,12 @@ fn collect_threads(
                 user: user.to_owned(),
                 state: tstat.state,
                 cpu_pct,
-                mem_rss_bytes: tstat.rss * cfg.page_size(),
+                mem_rss_bytes: tstat.rss * page_size,
                 mem_pct: Percent::new(0.0),
                 io: IoTotals::default(),
                 elapsed: Duration::ZERO,
                 cpu_time,
-                parent_name: stat.comm.clone(),
+                parent_name: parent_comm.clone(),
                 children: Tree::default(),
                 is_thread: true,
             })
