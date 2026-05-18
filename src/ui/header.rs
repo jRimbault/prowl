@@ -95,9 +95,13 @@ fn render_cpu_panel(
         Layout::horizontal([Constraint::Length(LABEL_W), Constraint::Fill(1)]).areas(area);
 
     let rows = graph_col.height as usize;
-    // Decouple format from app: pass the iterator of Percent directly.
-    let graph_rows = format::braille_graph_multi(history.iter(), graph_col.width as usize, rows);
-    let cpu_color = cpu_pct.color_scaled(cpu_count as f64 * 100.0);
+    // Lock the graph's y-axis to total CPU capacity (cpu_count * 100 %) so the
+    // visual height represents a stable fraction of the machine rather than
+    // auto-rescaling whenever the recent local maximum changes.
+    let max_pct = cpu_count as f64 * 100.0;
+    let graph_rows =
+        format::braille_graph_multi(history.iter(), graph_col.width as usize, rows, max_pct);
+    let cpu_color = cpu_pct.color_scaled(max_pct);
     const ROW_LABELS: [&str; 5] = ["", "", "C", "P", "U"];
 
     for r in 0..rows {

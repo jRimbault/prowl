@@ -139,9 +139,13 @@ pub fn braille_graph(samples: impl IntoIterator<Item = Percent>, width: usize) -
 ///
 /// Index 0 is the topmost terminal row, index `rows-1` the bottom.  Each
 /// terminal row contributes 4 braille dot levels, so `rows` rows yield
-/// `rows × 4` distinct fill heights.  Values are scaled to the history maximum
-/// and filled from the bottom upward, identical to btop's graph style.
-/// The bottom row always shows at least 1 dot height as a visible baseline.
+/// `rows × 4` distinct fill heights.  Values are scaled to `max_percent`
+/// (the y-axis ceiling, in the same units as `Percent`) and filled from the
+/// bottom upward, identical to btop's graph style.  Locking the scale to a
+/// known ceiling — e.g. `cpu_count * 100.0` for aggregated CPU% — keeps the
+/// graph's vertical range stable across time instead of jumping whenever a
+/// new local maximum arrives.  The bottom row always shows at least 1 dot
+/// height as a visible baseline.
 ///
 /// Takes an iterator of `Percent` values so this function has no dependency
 /// on any specific history container type.
@@ -149,6 +153,7 @@ pub fn braille_graph_multi(
     samples: impl IntoIterator<Item = Percent>,
     width: usize,
     rows: usize,
+    max_percent: f64,
 ) -> Vec<String> {
     if width == 0 || rows == 0 {
         return vec![String::new(); rows];
@@ -157,7 +162,9 @@ pub fn braille_graph_multi(
         .into_iter()
         .map(|p| (p.value() * 10.0) as u64)
         .collect();
-    let max = values.iter().copied().max().unwrap_or(0).max(1);
+    // Scale by 10 to match the internal sample representation, and clamp at 1
+    // so a degenerate `max_percent <= 0.0` never divides by zero.
+    let max = ((max_percent * 10.0) as u64).max(1);
     let n = 2 * width;
     let take = n.min(values.len());
     let mut slots = vec![0u64; n];
@@ -308,14 +315,14 @@ mod tests {
     fn braille_graph_multi_row_count_matches() {
         // Output must have exactly `rows` strings regardless of sample count.
         let samples: Vec<Percent> = (0..=10).map(|i| Percent::new(i as f64 * 10.0)).collect();
-        let result = braille_graph_multi(samples, 6, 4);
+        let result = braille_graph_multi(samples, 6, 4, 100.0);
         assert_eq!(result.len(), 4);
     }
 
     #[test]
     fn braille_graph_multi_each_row_has_width_chars() {
         let samples: Vec<Percent> = (0..=10).map(|i| Percent::new(i as f64 * 10.0)).collect();
-        let result = braille_graph_multi(samples, 5, 3);
+        let result = braille_graph_multi(samples, 5, 3, 100.0);
         for row in &result {
             assert_eq!(
                 row.chars().count(),
@@ -327,7 +334,7 @@ mod tests {
 
     #[test]
     fn braille_graph_multi_zero_rows_returns_empty_vec() {
-        let result = braille_graph_multi([Percent::new(50.0)], 4, 0);
+        let result = braille_graph_multi([Percent::new(50.0)], 4, 0, 100.0);
         assert_eq!(result.len(), 0);
     }
 
@@ -336,13 +343,30 @@ mod tests {
         // With monotonically increasing values, the bottom row must not be all
         // blank — the baseline guarantee ensures at least 1 dot per cell.
         let samples: Vec<Percent> = (1..=20).map(|i| Percent::new(i as f64 * 5.0)).collect();
-        let result = braille_graph_multi(samples, 4, 2);
+        let result = braille_graph_multi(samples, 4, 2, 100.0);
         let bottom = result.last().expect("must have a bottom row");
         // The braille blank is U+2800; any non-blank cell suffices.
         let blank = '\u{2800}';
         assert!(
             bottom.chars().any(|c| c != blank),
             "bottom row should have at least one non-blank cell"
+        );
+    }
+
+    #[test]
+    fn braille_graph_multi_locked_scale_keeps_small_values_low() {
+        // With max_percent = 800 (8-core capacity) and samples around 10 %, the
+        // graph should not paint the topmost rows — height is anchored to the
+        // ceiling, not to the local max.
+        let samples: Vec<Percent> = (0..20).map(|_| Percent::new(10.0)).collect();
+        let rows = 4;
+        let result = braille_graph_multi(samples, 6, rows, 800.0);
+        // 10 / 800 = 1.25 % of capacity ⇒ levels well below the top row.
+        let top = &result[0];
+        let blank = '\u{2800}';
+        assert!(
+            top.chars().all(|c| c == blank),
+            "top row must remain blank when samples are far below the locked ceiling"
         );
     }
 }
