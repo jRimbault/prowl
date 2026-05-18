@@ -15,4 +15,4 @@ expression: frame
 "│                                                          │"
 "│                                                          │"
 "│                                                          │"
-"╰ Esc/quit ─ ←↑↓→ nav ─ ␣ collapse ─ ⏎ detail ─ threads ───╯"
+"╰ Esc/quit ─ ←↑↓→ nav ─ ␣ collapse ─ ↵ detail ─ threads ───╯"

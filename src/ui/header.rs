@@ -65,13 +65,7 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let [cpu_panel, info_panel] =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Fill(1)]).areas(inner);
 
-    render_cpu_panel(
-        frame,
-        cpu_panel,
-        app.cpu_history(),
-        root.cpu_pct(),
-        app.cpu_count(),
-    );
+    render_cpu_panel(frame, cpu_panel, app.cpu_history(), root.cpu_pct());
     render_info_panel(frame, info_panel, root, app.mem_history());
 }
 
@@ -79,13 +73,16 @@ pub fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 ///
 /// Row 0 shows the current percentage; rows 1-3 show the "C", "P", "U" label
 /// letters; remaining rows are blank.  The graph fills all rows from the bottom
-/// upward so the trace reads as a filled area chart.
+/// upward so the trace reads as a filled area chart.  The y-axis spans 0–100 %
+/// (single-core capacity), matching btop's per-process CPU graph: typical
+/// sub-100 % activity stays readable, and rare multi-threaded bursts above
+/// 100 % clip at the top of the panel rather than squashing the common case
+/// against the baseline.
 fn render_cpu_panel(
     frame: &mut Frame,
     area: Rect,
     history: &History,
     cpu_pct: crate::format::Percent,
-    cpu_count: usize,
 ) {
     if area.width < 4 || area.height == 0 {
         return;
@@ -95,13 +92,9 @@ fn render_cpu_panel(
         Layout::horizontal([Constraint::Length(LABEL_W), Constraint::Fill(1)]).areas(area);
 
     let rows = graph_col.height as usize;
-    // Lock the graph's y-axis to total CPU capacity (cpu_count * 100 %) so the
-    // visual height represents a stable fraction of the machine rather than
-    // auto-rescaling whenever the recent local maximum changes.
-    let max_pct = cpu_count as f64 * 100.0;
     let graph_rows =
-        format::braille_graph_multi(history.iter(), graph_col.width as usize, rows, max_pct);
-    let cpu_color = cpu_pct.color_scaled(max_pct);
+        format::braille_graph_multi(history.iter(), graph_col.width as usize, rows, 100.0);
+    let label_color = cpu_pct.color();
     const ROW_LABELS: [&str; 5] = ["", "", "C", "P", "U"];
 
     for r in 0..rows {
@@ -116,7 +109,7 @@ fn render_cpu_panel(
             format!("{:<7}", ROW_LABELS.get(r).copied().unwrap_or(""))
         };
         let label_style = if r == 0 {
-            Style::new().fg(cpu_color).bold()
+            Style::new().fg(label_color).bold()
         } else {
             Style::new().fg(Color::White)
         };
@@ -126,12 +119,47 @@ fn render_cpu_panel(
         );
 
         if let Some(row_str) = graph_rows.get(r) {
+            let row_color = cpu_row_color(r, rows);
             frame.render_widget(
-                Paragraph::new(Span::styled(row_str.as_str(), Style::new().fg(cpu_color))),
+                Paragraph::new(Span::styled(row_str.as_str(), Style::new().fg(row_color))),
                 Rect::new(graph_col.left(), y, graph_col.width, 1),
             );
         }
     }
+}
+
+/// Color for graph row `row` (0 = topmost) based on the vertical position it
+/// occupies when the y-axis spans 0–100 %.  Mirrors btop's gradient: bottom
+/// rows green, middle yellow, top red — so a single column's gradient reads
+/// as the intensity of that sample.  Uses 24-bit RGB and interpolates between
+/// three anchor colours so neighbouring rows differ by a few RGB units
+/// instead of jumping between the three terminal-palette slots; the result
+/// reads as a continuous gradient rather than discrete bands.
+fn cpu_row_color(row: usize, total_rows: usize) -> Color {
+    // Anchor stops along the green → yellow → red path used by btop.
+    const LOW: (u8, u8, u8) = (0x2b, 0xd6, 0x24);
+    const MID: (u8, u8, u8) = (0xf5, 0xd6, 0x30);
+    const HIGH: (u8, u8, u8) = (0xde, 0x2c, 0x2c);
+
+    if total_rows == 0 {
+        return Color::Rgb(LOW.0, LOW.1, LOW.2);
+    }
+    // t = 0 at the bottom row, t = 1 at the top row.  A single-row graph
+    // collapses to t = 0 (LOW) rather than dividing by zero.
+    let denom = (total_rows - 1).max(1) as f64;
+    let t = (total_rows - 1 - row) as f64 / denom;
+    let (r, g, b) = if t < 0.5 {
+        lerp_rgb(LOW, MID, t * 2.0)
+    } else {
+        lerp_rgb(MID, HIGH, (t - 0.5) * 2.0)
+    };
+    Color::Rgb(r, g, b)
+}
+
+fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f64) -> (u8, u8, u8) {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round() as u8;
+    (mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2))
 }
 
 /// Render the right info panel as four bordered column blocks + a memory
@@ -320,10 +348,10 @@ mod tests {
         assert_snapshot!(frame);
     }
 
-    /// Idle history (small CPU%) on an 8-core machine.  With the y-axis
-    /// locked to 800 % capacity, the trace must sit close to the baseline
-    /// — never spike to fill the panel.  Regression guard for the
-    /// auto-rescaling behaviour we removed.
+    /// Idle history (small CPU%).  With the y-axis fixed at 100 %, the
+    /// trace must sit close to the baseline — never spike to fill the
+    /// panel.  Regression guard for the auto-rescaling behaviour we
+    /// removed.
     #[test]
     fn renders_with_idle_cpu_history() {
         let app = test_support::make_app_with_history(&[
@@ -342,21 +370,21 @@ mod tests {
         assert_snapshot!(frame);
     }
 
-    /// Mixed ramp covering most of the [0, cpu_count * 100] range so
-    /// successive rows of the multi-row graph each carry visible dots.
+    /// Mixed ramp covering most of the 0–100 % range so successive rows
+    /// of the multi-row graph each carry visible dots.
     #[test]
     fn renders_with_mixed_cpu_history() {
         let app = test_support::make_app_with_history(&[
-            (10.0, 1.0),
-            (80.0, 1.5),
-            (220.0, 2.5),
-            (450.0, 4.0),
-            (640.0, 6.0),
-            (540.0, 5.5),
-            (380.0, 4.5),
-            (260.0, 4.0),
-            (180.0, 3.5),
-            (120.0, 3.0),
+            (5.0, 1.0),
+            (15.0, 1.5),
+            (30.0, 2.5),
+            (55.0, 4.0),
+            (80.0, 6.0),
+            (70.0, 5.5),
+            (50.0, 4.5),
+            (35.0, 4.0),
+            (22.0, 3.5),
+            (15.0, 3.0),
         ]);
         let frame = test_support::render_widget(100, 9, |frame, area| {
             super::render_header(frame, &app, area);
@@ -364,23 +392,59 @@ mod tests {
         assert_snapshot!(frame);
     }
 
-    /// Saturated history — every sample sits near the 8-core ceiling, so
-    /// the locked-scale graph fills the panel from baseline to the top row.
+    /// Saturated history — every sample sits near the 100 % single-core
+    /// ceiling, so the graph fills the panel from baseline to the top row.
     #[test]
     fn renders_with_saturated_cpu_history() {
         let app = test_support::make_app_with_history(&[
-            (760.0, 8.0),
-            (790.0, 9.0),
-            (770.0, 8.5),
-            (795.0, 9.0),
-            (780.0, 8.8),
-            (800.0, 9.2),
-            (785.0, 9.0),
-            (790.0, 9.1),
+            (95.0, 8.0),
+            (99.0, 9.0),
+            (96.0, 8.5),
+            (99.0, 9.0),
+            (97.0, 8.8),
+            (100.0, 9.2),
+            (98.0, 9.0),
+            (99.0, 9.1),
         ]);
         let frame = test_support::render_widget(100, 9, |frame, area| {
             super::render_header(frame, &app, area);
         });
         assert_snapshot!(frame);
+    }
+
+    /// Bottom of the graph reads green, top reads red, every row is a
+    /// distinct shade — i.e. a continuous green→yellow→red gradient
+    /// rather than three palette bands.
+    #[test]
+    fn cpu_row_color_gradient_is_continuous() {
+        use ratatui::style::Color;
+        let rows = 6;
+        let colors: Vec<(u8, u8, u8)> = (0..rows)
+            .map(|r| match super::cpu_row_color(r, rows) {
+                Color::Rgb(r, g, b) => (r, g, b),
+                other => panic!("expected Rgb, got {other:?}"),
+            })
+            .collect();
+        // No two rows share an exact shade (the previous palette-banded
+        // implementation collapsed pairs of rows to identical colours).
+        let mut unique = colors.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            colors.len(),
+            "expected a distinct shade per row, got {colors:?}"
+        );
+        // Bottom is greener than red; top is redder than green.
+        let (br, bg, _) = *colors.last().expect("non-empty");
+        let (tr, tg, _) = colors[0];
+        assert!(
+            bg > br,
+            "bottom row should be greener than red: ({br}, {bg}, _)"
+        );
+        assert!(
+            tr > tg,
+            "top row should be redder than green: ({tr}, {tg}, _)"
+        );
     }
 }
