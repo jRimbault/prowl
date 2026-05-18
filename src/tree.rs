@@ -88,20 +88,39 @@ impl Row {
 ///
 /// The connector strings use Unicode box-drawing characters (├─, └─, │)
 /// to reproduce an htop-style tree appearance in a columnar table.
+///
+/// `filter` is a case-insensitive substring filter applied to each node's
+/// name and cmdline.  Pass `""` for no filtering.  When filtering is active,
+/// only nodes that match the filter (or are ancestors of a match) appear
+/// in the output, preserving the tree connectors for matched paths.
 pub fn flatten(
     tree: &crate::process::Tree,
     show_threads: bool,
     collapsed: &HashSet<Pid>,
+    filter: &str,
 ) -> Vec<Row> {
     let Some(root) = tree.root() else {
         return Vec::new();
+    };
+    let filter_lc = filter.to_lowercase();
+    // Precompute the set of relevant PIDs in a single bottom-up pass so the
+    // recursive flatten doesn't need to re-walk subtrees to test relevance.
+    let relevant: Option<HashSet<Pid>> = if filter_lc.is_empty() {
+        None
+    } else {
+        let mut set = HashSet::new();
+        collect_relevant(root, show_threads, &filter_lc, &mut set);
+        Some(set)
     };
     let ctx = FlattenCtx {
         root_name: root.name(),
         show_threads,
         collapsed,
+        relevant: relevant.as_ref(),
     };
     let mut out = Vec::new();
+    // Root is always included so the user always sees the monitored process
+    // even when the filter matches nothing below it.
     flatten_node(root, &ctx, "", true, true, &mut out);
     out
 }
@@ -111,6 +130,39 @@ struct FlattenCtx<'a> {
     root_name: &'a str,
     show_threads: bool,
     collapsed: &'a HashSet<Pid>,
+    /// `Some` only when a non-empty filter is active.  Contains PIDs of nodes
+    /// that match the filter themselves or have a matching descendant.
+    relevant: Option<&'a HashSet<Pid>>,
+}
+
+/// Case-insensitive substring match against a node's name and cmdline.
+fn node_matches_filter(node: &crate::process::Node, filter_lc: &str) -> bool {
+    node.name().to_lowercase().contains(filter_lc)
+        || node.cmdline().to_lowercase().contains(filter_lc)
+}
+
+/// Bottom-up walk that records every PID whose subtree contains at least one
+/// filter match (including the node itself).  Returns whether the visited
+/// subtree contributed any match — letting parents bubble that up.
+fn collect_relevant(
+    node: &crate::process::Node,
+    show_threads: bool,
+    filter_lc: &str,
+    out: &mut HashSet<Pid>,
+) -> bool {
+    let mut any = node_matches_filter(node, filter_lc);
+    for child in node.children() {
+        if !show_threads && child.is_thread() {
+            continue;
+        }
+        if collect_relevant(child, show_threads, filter_lc, out) {
+            any = true;
+        }
+    }
+    if any {
+        out.insert(node.pid());
+    }
+    any
 }
 
 /// Choose how a node's command string should appear in the tree.
@@ -166,6 +218,8 @@ fn flatten_node(
         .children()
         .iter()
         .filter(|c| ctx.show_threads || !c.is_thread())
+        // When filtering, keep only children whose subtree contributed a match.
+        .filter(|c| ctx.relevant.is_none_or(|r| r.contains(&c.pid())))
         .collect();
     let is_collapsed = ctx.collapsed.contains(&node.pid());
 
@@ -216,7 +270,7 @@ mod tests {
     fn flatten_single_node() {
         let root: Tree = [make_test_node(1, "root")].into_iter().collect();
         let no_collapsed = HashSet::new();
-        let rows = flatten(&root, false, &no_collapsed);
+        let rows = flatten(&root, false, &no_collapsed, "");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].connector(), "");
         assert_eq!(rows[0].pid(), Pid::new(1));
@@ -232,7 +286,7 @@ mod tests {
         .into_iter()
         .collect();
         let no_collapsed = HashSet::new();
-        let rows = flatten(&root, false, &no_collapsed);
+        let rows = flatten(&root, false, &no_collapsed, "");
         assert_eq!(rows.len(), 3);
         // First child is not last → ├─
         assert_eq!(rows[1].connector(), "├─ ");
@@ -246,7 +300,7 @@ mod tests {
             .into_iter()
             .collect();
         let no_collapsed = HashSet::new();
-        let rows = flatten(&root, false, &no_collapsed);
+        let rows = flatten(&root, false, &no_collapsed, "");
         assert_eq!(rows.len(), 1, "thread should be hidden");
     }
 
@@ -256,7 +310,7 @@ mod tests {
             .into_iter()
             .collect();
         let no_collapsed = HashSet::new();
-        let rows = flatten(&root, true, &no_collapsed);
+        let rows = flatten(&root, true, &no_collapsed, "");
         assert_eq!(rows.len(), 2, "thread should appear");
         assert!(rows[1].is_thread());
     }
@@ -271,7 +325,7 @@ mod tests {
         .into_iter()
         .collect();
         let collapsed = HashSet::from([Pid::new(1)]);
-        let rows = flatten(&root, false, &collapsed);
+        let rows = flatten(&root, false, &collapsed, "");
         assert_eq!(
             rows.len(),
             1,
@@ -289,10 +343,62 @@ mod tests {
         let root: Tree = [make_test_node(1, "root"), child].into_iter().collect();
         // Collapse child (pid 2), not root.
         let collapsed = HashSet::from([Pid::new(2)]);
-        let rows = flatten(&root, false, &collapsed);
+        let rows = flatten(&root, false, &collapsed, "");
         assert_eq!(rows.len(), 2, "grandchild should be hidden");
         assert!(!rows[0].is_collapsed());
         assert!(rows[1].is_collapsed());
+    }
+
+    #[test]
+    fn flatten_filter_keeps_matching_descendant_and_ancestors() {
+        // root -> child1 (no match), root -> child2 (match)
+        let root: Tree = [
+            make_test_node(1, "root"),
+            make_test_node(2, "child1"),
+            make_test_node(3, "child2"),
+        ]
+        .into_iter()
+        .collect();
+        let no_collapsed = HashSet::new();
+        let rows = flatten(&root, false, &no_collapsed, "child2");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].pid(), Pid::new(1));
+        assert_eq!(rows[1].pid(), Pid::new(3));
+        // Only one visible child remains → that child renders as the last sibling.
+        assert_eq!(rows[1].connector(), "└─ ");
+    }
+
+    #[test]
+    fn flatten_filter_is_case_insensitive() {
+        let root: Tree = [make_test_node(1, "Root"), make_test_node(2, "WorkerProc")]
+            .into_iter()
+            .collect();
+        let no_collapsed = HashSet::new();
+        let rows = flatten(&root, false, &no_collapsed, "worker");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].pid(), Pid::new(2));
+    }
+
+    #[test]
+    fn flatten_filter_no_match_keeps_only_root() {
+        let root: Tree = [make_test_node(1, "root"), make_test_node(2, "child")]
+            .into_iter()
+            .collect();
+        let no_collapsed = HashSet::new();
+        let rows = flatten(&root, false, &no_collapsed, "nothing-matches");
+        assert_eq!(rows.len(), 1, "root remains as monitored-process anchor");
+        assert_eq!(rows[0].pid(), Pid::new(1));
+    }
+
+    #[test]
+    fn flatten_filter_matches_via_cmdline() {
+        let mut child = make_test_node(2, "binary");
+        set_cmdline(&mut child, "binary --special-flag");
+        let root: Tree = [make_test_node(1, "root"), child].into_iter().collect();
+        let no_collapsed = HashSet::new();
+        let rows = flatten(&root, false, &no_collapsed, "special-flag");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].pid(), Pid::new(2));
     }
 
     #[test]

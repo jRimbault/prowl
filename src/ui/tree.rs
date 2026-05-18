@@ -269,24 +269,50 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     ]
     .into_iter();
 
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(Color::DarkGray))
+        .merge_borders(MergeStrategy::Fuzzy)
+        .title_top(filter_title(app))
+        .title_bottom(footer_hints.next().unwrap())
+        .title_bottom(footer_hints.next().unwrap())
+        .title_bottom(footer_hints.next().unwrap())
+        .title_bottom(footer_hints.next().unwrap())
+        .title_bottom(footer_hints.next().unwrap());
+
     let table = Table::new(rows, widths)
+        .block(block)
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::new().fg(Color::DarkGray))
-                .merge_borders(MergeStrategy::Fuzzy)
-                .title_bottom(footer_hints.next().unwrap())
-                .title_bottom(footer_hints.next().unwrap())
-                .title_bottom(footer_hints.next().unwrap())
-                .title_bottom(footer_hints.next().unwrap())
-                .title_bottom(footer_hints.next().unwrap()),
-        )
         .row_highlight_style(Style::new().bg(Color::DarkGray).bold())
         .column_spacing(1);
 
     frame.render_stateful_widget(table, area, app.table_state_mut());
+}
+
+/// Compose the filter tab shown in the tree's top border.
+///
+/// Always shows the `f` keybind so the user can discover the feature.  When a
+/// filter is set or the user is editing one, the tab also renders the current
+/// text (with a `_` caret while typing) and surfaces the `Del clear` hint —
+/// the latter only when there is actually something to clear.
+fn filter_title(app: &crate::app::App) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(6);
+    spans.push(Span::styled(" f", Style::new().fg(Color::Cyan)));
+    spans.push(Span::styled("ilter", Style::new().fg(Color::White)));
+    if app.filter_input() || !app.filter().is_empty() {
+        spans.push(Span::raw(": "));
+        let caret = if app.filter_input() { "_" } else { "" };
+        spans.push(Span::styled(
+            format!("{}{}", app.filter(), caret),
+            Style::new().fg(Color::Yellow),
+        ));
+    }
+    spans.push(Span::raw(" "));
+    if !app.filter().is_empty() {
+        spans.push(Span::styled("del ", Style::new().fg(Color::Cyan)));
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]

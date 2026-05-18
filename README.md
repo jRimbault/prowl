@@ -25,5 +25,7 @@ Omit the PID to launch an interactive process picker.
 | `Space`             | Collapse / expand the subtree        |
 | `Enter`             | Open / close the detail panel        |
 | `t`                 | Toggle thread visibility             |
+| `f`                 | Filter the tree by name / cmdline    |
+| `Del`               | Clear the active filter              |
 | `+` / `-`           | Slow down / speed up polling (100ms) |
 

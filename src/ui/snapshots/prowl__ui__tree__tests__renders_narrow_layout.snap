@@ -2,7 +2,7 @@
 source: src/ui/tree.rs
 expression: frame
 ---
-"╭──────────────────────────────────────────────────────────╮"
+"╭ filter ──────────────────────────────────────────────────╮"
 "│  PID    S   CPU%  Command                                │"
 "│   1234  R   12.3  ▾ /usr/bin/myapp --serve --port 8080   │"
 "│   1235  S    1.2  ├─ ▾ /usr/bin/myapp worker --queue task│"

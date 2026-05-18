@@ -2,7 +2,7 @@
 source: src/ui/tree.rs
 expression: frame
 ---
-"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮"
+"╭ filter ──────────────────────────────────────────────────────────────────────────────────────────────────────────────╮"
 "│  PID    USER      STATE     CPU%  RES      ELAPSED   Command                                                         │"
 "│   1234  alice     Running   12.3  50.0 MiB 01:02:05  ▾ /usr/bin/myapp --serve --port 8080                            │"
 "│   1235  alice     Sleeping   1.2  8.0 MiB  01:01:40  ├─ ▾ /usr/bin/myapp worker --queue tasks                        │"

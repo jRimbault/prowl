@@ -146,9 +146,26 @@ async fn main() -> anyhow::Result<()> {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
                         match key.code {
+                            // --- Filter input mode ---
+                            // While the filter prompt is active, character
+                            // keystrokes edit the filter rather than firing
+                            // their normal actions; Esc/Enter exit input mode
+                            // without clearing the filter; Backspace edits.
+                            KeyCode::Char(c) if app.filter_input() => app.push_filter_char(c),
+                            KeyCode::Backspace if app.filter_input() => app.pop_filter_char(),
+                            KeyCode::Enter if app.filter_input() => app.exit_filter_input(),
+                            // Del always clears the filter and leaves input mode.
+                            KeyCode::Delete => { let _ = app.clear_filter(); }
+
                             KeyCode::Char('q') => break,
-                            // Esc closes the detail panel if open; otherwise quits.
-                            KeyCode::Esc if !app.close_detail() => break,
+                            // Esc precedence: leave filter input → close detail → quit.
+                            KeyCode::Esc => {
+                                if app.filter_input() {
+                                    app.exit_filter_input();
+                                } else if !app.close_detail() {
+                                    break;
+                                }
+                            }
                             // Ctrl+arrow jumps to the corresponding extremity;
                             // plain arrows step by one. The Ctrl variants are
                             // matched first so the unmodified arms only fire
@@ -169,6 +186,7 @@ async fn main() -> anyhow::Result<()> {
                             KeyCode::Down => app.move_down(),
                             KeyCode::Left => app.scroll_left(),
                             KeyCode::Right => app.scroll_right(),
+                            KeyCode::Char('f') => app.enter_filter_input(),
                             KeyCode::Char('t') => app.toggle_threads(),
                             KeyCode::Char(' ') => app.toggle_collapse(),
                             KeyCode::Enter => {

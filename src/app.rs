@@ -100,6 +100,11 @@ pub struct App {
     detail_pid: Option<Pid>,
     /// Last fetched detail data for `detail_pid`.  Cleared when the panel closes.
     detail_info: Option<ProcessDetail>,
+    /// Case-insensitive substring filter applied to the tree.  Empty = no filter.
+    filter: String,
+    /// `true` while the user is typing into the filter buffer.  Keystrokes
+    /// that would normally trigger actions are routed to the filter instead.
+    filter_input: bool,
 }
 
 impl App {
@@ -121,6 +126,8 @@ impl App {
             h_scroll: 0,
             detail_pid: None,
             detail_info: None,
+            filter: String::new(),
+            filter_input: false,
         }
     }
 
@@ -178,6 +185,14 @@ impl App {
 
     pub fn detail_info(&self) -> Option<&ProcessDetail> {
         self.detail_info.as_ref()
+    }
+
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    pub fn filter_input(&self) -> bool {
+        self.filter_input
     }
 
     /// Shift the command column rightward (text moves left under the
@@ -249,11 +264,22 @@ impl App {
         self.name = root.name().to_owned();
         self.cpu_history.push(root.cpu_pct());
         self.mem_history.push(root.mem_pct());
-        self.flat_rows = flatten(&tree, self.show_threads, &self.collapsed);
+        self.root = Some(tree);
+        self.refresh_rows();
+    }
+
+    /// Re-flatten `self.root` using the current display preferences and
+    /// filter, then re-sync the scroll position.  All mutations that change
+    /// what the table shows (snapshot, thread/collapse/filter toggles) funnel
+    /// through here so the row list, selection clamp, and scroll offset stay
+    /// in lockstep.
+    fn refresh_rows(&mut self) {
+        if let Some(tree) = &self.root {
+            self.flat_rows = flatten(tree, self.show_threads, &self.collapsed, &self.filter);
+        }
         if !self.flat_rows.is_empty() && self.selected >= self.flat_rows.len() {
             self.selected = self.flat_rows.len() - 1;
         }
-        self.root = Some(tree);
         self.sync_scroll();
     }
 
@@ -302,13 +328,7 @@ impl App {
     /// Toggle thread visibility using the already-cached snapshot — no refresh needed.
     pub fn toggle_threads(&mut self) {
         self.show_threads = !self.show_threads;
-        if let Some(tree) = &self.root {
-            self.flat_rows = flatten(tree, self.show_threads, &self.collapsed);
-        }
-        if !self.flat_rows.is_empty() && self.selected >= self.flat_rows.len() {
-            self.selected = self.flat_rows.len() - 1;
-        }
-        self.sync_scroll();
+        self.refresh_rows();
     }
 
     /// Toggle collapse state of the currently selected node's subtree.
@@ -318,13 +338,7 @@ impl App {
             if !self.collapsed.remove(&pid) {
                 self.collapsed.insert(pid);
             }
-            if let Some(tree) = &self.root {
-                self.flat_rows = flatten(tree, self.show_threads, &self.collapsed);
-            }
-            if !self.flat_rows.is_empty() && self.selected >= self.flat_rows.len() {
-                self.selected = self.flat_rows.len() - 1;
-            }
-            self.sync_scroll();
+            self.refresh_rows();
         }
     }
 
@@ -353,6 +367,45 @@ impl App {
     /// Store freshly fetched detail info for the currently open panel.
     pub fn set_detail_info(&mut self, info: ProcessDetail) {
         self.detail_info = Some(info);
+    }
+
+    /// Enter filter-input mode.  Subsequent character keystrokes append to
+    /// the filter buffer.  Does not clear the existing filter, so pressing
+    /// `f` again lets the user edit the current text.
+    pub fn enter_filter_input(&mut self) {
+        self.filter_input = true;
+    }
+
+    /// Leave filter-input mode without changing the filter text.  The filter
+    /// itself stays in effect.
+    pub fn exit_filter_input(&mut self) {
+        self.filter_input = false;
+    }
+
+    /// Append a character to the filter buffer and re-flatten the tree.
+    pub fn push_filter_char(&mut self, c: char) {
+        self.filter.push(c);
+        self.refresh_rows();
+    }
+
+    /// Remove the last character from the filter buffer (Backspace) and
+    /// re-flatten.  No-op when the buffer is empty.
+    pub fn pop_filter_char(&mut self) {
+        if self.filter.pop().is_some() {
+            self.refresh_rows();
+        }
+    }
+
+    /// Clear the filter entirely and leave input mode.  Returns `true` if
+    /// anything changed (filter was non-empty or input mode was active).
+    pub fn clear_filter(&mut self) -> bool {
+        let changed = !self.filter.is_empty() || self.filter_input;
+        self.filter.clear();
+        self.filter_input = false;
+        if changed {
+            self.refresh_rows();
+        }
+        changed
     }
 
     /// Close the detail panel if it is open.  Returns `true` if it was open.
