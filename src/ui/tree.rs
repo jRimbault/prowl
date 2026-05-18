@@ -245,25 +245,25 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut footer_hints = [
         Line::from(Vec::from([
-            Span::styled(" Esc", Style::new().fg(Color::Cyan)),
+            Span::styled(" Esc", Style::new().fg(Color::Cyan).bold()),
             Span::styled("/", Style::new().fg(Color::White)),
-            Span::styled("q", Style::new().fg(Color::Cyan)),
+            Span::styled("q", Style::new().fg(Color::Cyan).bold()),
             Span::styled("uit ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" ←↑↓→", Style::new().fg(Color::Cyan)),
+            Span::styled(" ←↑↓→", Style::new().fg(Color::Cyan).bold()),
             Span::styled(" nav ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" ␣", Style::new().fg(Color::Cyan)),
+            Span::styled(" ␣", Style::new().fg(Color::Cyan).bold()),
             Span::styled(" collapse ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" ⏎", Style::new().fg(Color::Cyan)),
+            Span::styled(" ↵", Style::new().fg(Color::Cyan).bold()),
             Span::styled(" detail ", Style::new().fg(Color::White)),
         ])),
         Line::from(Vec::from([
-            Span::styled(" t", Style::new().fg(Color::Cyan)),
+            Span::styled(" t", Style::new().fg(Color::Cyan).bold()),
             Span::styled("hreads ", Style::new().fg(Color::White)),
         ])),
     ]
@@ -298,7 +298,7 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
 /// the latter only when there is actually something to clear.
 fn filter_title(app: &crate::app::App) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(6);
-    spans.push(Span::styled(" f", Style::new().fg(Color::Cyan)));
+    spans.push(Span::styled(" f", Style::new().fg(Color::Cyan).bold()));
     spans.push(Span::styled("ilter", Style::new().fg(Color::White)));
     if app.filter_input() || !app.filter().is_empty() {
         spans.push(Span::raw(": "));
@@ -310,7 +310,7 @@ fn filter_title(app: &crate::app::App) -> Line<'static> {
     }
     spans.push(Span::raw(" "));
     if !app.filter().is_empty() {
-        spans.push(Span::styled("del ", Style::new().fg(Color::Cyan)));
+        spans.push(Span::styled("del ", Style::new().fg(Color::Cyan).bold()));
     }
     Line::from(spans)
 }
