@@ -73,6 +73,34 @@ pub fn make_app() -> App {
     app
 }
 
+/// Build an `App` whose CPU and MEM histories have been populated by
+/// applying a sequence of synthetic snapshots.  Each `(cpu_pct, mem_pct)`
+/// pair produces one history sample; the *last* pair also drives the
+/// "current" values rendered in the info column.  Useful for snapshot-
+/// testing the header sparklines with non-trivial dynamic range — a single
+/// `apply_snapshot` call leaves only a flat baseline behind.
+///
+/// Each iteration submits a minimal single-node tree (no children/threads)
+/// so the test stays focused on graph rendering rather than tree layout.
+pub fn make_app_with_history(samples: &[(f64, f64)]) -> App {
+    let mut app = App::new(true, 8, Duration::from_millis(1000));
+    for &(cpu, mem) in samples {
+        let mut root = make_test_node(1234, "myapp");
+        set_cmdline(&mut root, "/usr/bin/myapp --serve --port 8080");
+        set_user(&mut root, "alice");
+        set_state(&mut root, 'R');
+        set_cpu_pct(&mut root, cpu);
+        set_mem_pct(&mut root, mem);
+        set_mem_rss_bytes(&mut root, 50 * 1024 * 1024);
+        set_elapsed(&mut root, Duration::from_secs(3725));
+        set_cpu_time(&mut root, Duration::from_secs(60));
+        set_io(&mut root, 4 * 1024 * 1024, 2 * 1024 * 1024);
+        set_parent_name(&mut root, "bash");
+        app.apply_snapshot(Tree::from(root));
+    }
+    app
+}
+
 /// Mirror of `make_app` but with the detail panel pre-populated with the
 /// supplied `ProcessDetail`.  Selects the row that matches the detail PID
 /// before opening the panel so `App::toggle_detail` activates the right

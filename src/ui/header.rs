@@ -319,4 +319,68 @@ mod tests {
         });
         assert_snapshot!(frame);
     }
+
+    /// Idle history (small CPU%) on an 8-core machine.  With the y-axis
+    /// locked to 800 % capacity, the trace must sit close to the baseline
+    /// — never spike to fill the panel.  Regression guard for the
+    /// auto-rescaling behaviour we removed.
+    #[test]
+    fn renders_with_idle_cpu_history() {
+        let app = test_support::make_app_with_history(&[
+            (2.0, 0.4),
+            (3.5, 0.5),
+            (1.2, 0.5),
+            (4.1, 0.6),
+            (2.7, 0.5),
+            (1.8, 0.5),
+            (3.0, 0.6),
+            (2.4, 0.6),
+        ]);
+        let frame = test_support::render_widget(100, 9, |frame, area| {
+            super::render_header(frame, &app, area);
+        });
+        assert_snapshot!(frame);
+    }
+
+    /// Mixed ramp covering most of the [0, cpu_count * 100] range so
+    /// successive rows of the multi-row graph each carry visible dots.
+    #[test]
+    fn renders_with_mixed_cpu_history() {
+        let app = test_support::make_app_with_history(&[
+            (10.0, 1.0),
+            (80.0, 1.5),
+            (220.0, 2.5),
+            (450.0, 4.0),
+            (640.0, 6.0),
+            (540.0, 5.5),
+            (380.0, 4.5),
+            (260.0, 4.0),
+            (180.0, 3.5),
+            (120.0, 3.0),
+        ]);
+        let frame = test_support::render_widget(100, 9, |frame, area| {
+            super::render_header(frame, &app, area);
+        });
+        assert_snapshot!(frame);
+    }
+
+    /// Saturated history — every sample sits near the 8-core ceiling, so
+    /// the locked-scale graph fills the panel from baseline to the top row.
+    #[test]
+    fn renders_with_saturated_cpu_history() {
+        let app = test_support::make_app_with_history(&[
+            (760.0, 8.0),
+            (790.0, 9.0),
+            (770.0, 8.5),
+            (795.0, 9.0),
+            (780.0, 8.8),
+            (800.0, 9.2),
+            (785.0, 9.0),
+            (790.0, 9.1),
+        ]);
+        let frame = test_support::render_widget(100, 9, |frame, area| {
+            super::render_header(frame, &app, area);
+        });
+        assert_snapshot!(frame);
+    }
 }
