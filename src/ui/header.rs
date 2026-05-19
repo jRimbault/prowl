@@ -136,12 +136,13 @@ fn render_cpu_panel(
 /// instead of jumping between the three terminal-palette slots; the result
 /// reads as a continuous gradient rather than discrete bands.
 fn cpu_row_color(row: usize, total_rows: usize) -> Color {
-    // Anchor stops along the green → yellow → red path used by btop.  LOW
-    // is the canonical UI green (`format::GREEN_RGB`) so the gradient's
-    // baseline shade matches every other green accent in the app.
+    // Pastel anchor stops along the green → yellow → red path, matching
+    // btop's classic palette.  LOW is the canonical UI green
+    // (`format::GREEN_RGB`) so the gradient's baseline shade also drives
+    // every other green accent in the app.
     const LOW: (u8, u8, u8) = format::GREEN_RGB;
-    const MID: (u8, u8, u8) = (0xf5, 0xd6, 0x30);
-    const HIGH: (u8, u8, u8) = (0xde, 0x2c, 0x2c);
+    const MID: (u8, u8, u8) = (0xe6, 0xc0, 0x55);
+    const HIGH: (u8, u8, u8) = (0xd9, 0x6c, 0x6c);
 
     if total_rows == 0 {
         return Color::Rgb(LOW.0, LOW.1, LOW.2);

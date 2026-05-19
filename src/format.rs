@@ -6,8 +6,9 @@ use std::time::Duration;
 /// RGB triple of the "low/baseline" green used at the bottom of the CPU
 /// gradient.  Shared so every green accent across the UI matches that one
 /// shade instead of falling back to the terminal palette's `Color::Green`,
-/// which varies wildly between themes.
-pub const GREEN_RGB: (u8, u8, u8) = (0x2b, 0xd6, 0x24);
+/// which varies wildly between themes.  Pastel sage tone, picked to match
+/// btop's default classic palette rather than CRT-vivid neon green.
+pub const GREEN_RGB: (u8, u8, u8) = (0x82, 0xcc, 0x66);
 
 /// `GREEN_RGB` as a `ratatui` `Color`.
 pub const GREEN: Color = Color::Rgb(GREEN_RGB.0, GREEN_RGB.1, GREEN_RGB.2);
