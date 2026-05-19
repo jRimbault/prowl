@@ -96,7 +96,7 @@ fn render_activity(frame: &mut Frame, info: &ProcessDetail, area: Rect) {
     let wchan_style = if info.wchan.is_some() {
         Style::new().fg(Color::Cyan)
     } else {
-        Style::new().fg(Color::Green)
+        Style::new().fg(format::GREEN)
     };
 
     // Major-fault accent: any non-zero count is worth eyeing.

@@ -136,8 +136,10 @@ fn render_cpu_panel(
 /// instead of jumping between the three terminal-palette slots; the result
 /// reads as a continuous gradient rather than discrete bands.
 fn cpu_row_color(row: usize, total_rows: usize) -> Color {
-    // Anchor stops along the green → yellow → red path used by btop.
-    const LOW: (u8, u8, u8) = (0x2b, 0xd6, 0x24);
+    // Anchor stops along the green → yellow → red path used by btop.  LOW
+    // is the canonical UI green (`format::GREEN_RGB`) so the gradient's
+    // baseline shade matches every other green accent in the app.
+    const LOW: (u8, u8, u8) = format::GREEN_RGB;
     const MID: (u8, u8, u8) = (0xf5, 0xd6, 0x30);
     const HIGH: (u8, u8, u8) = (0xde, 0x2c, 0x2c);
 
@@ -238,7 +240,7 @@ fn render_info_panel(
         mem_row,
         &format!("  Memory {:>6.1}%  ", root.mem_pct().value()),
         mem_history,
-        Color::Green,
+        format::GREEN,
         &format!("  {}", format::format_bytes(root.mem_rss_bytes())),
     );
 }

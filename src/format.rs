@@ -3,6 +3,15 @@
 use ratatui::style::Color;
 use std::time::Duration;
 
+/// RGB triple of the "low/baseline" green used at the bottom of the CPU
+/// gradient.  Shared so every green accent across the UI matches that one
+/// shade instead of falling back to the terminal palette's `Color::Green`,
+/// which varies wildly between themes.
+pub const GREEN_RGB: (u8, u8, u8) = (0x2b, 0xd6, 0x24);
+
+/// `GREEN_RGB` as a `ratatui` `Color`.
+pub const GREEN: Color = Color::Rgb(GREEN_RGB.0, GREEN_RGB.1, GREEN_RGB.2);
+
 /// A percentage value in [0.0, 100.0], used for CPU and memory metrics.
 ///
 /// Centralises the traffic-light colour mapping and ratio conversion that
@@ -20,7 +29,7 @@ impl Percent {
     /// Green < 30 %, Yellow < 70 %, Red otherwise.
     pub fn color(self) -> Color {
         match self.0 {
-            p if p < 30.0 => Color::Green,
+            p if p < 30.0 => GREEN,
             p if p < 70.0 => Color::Yellow,
             _ => Color::Red,
         }
@@ -40,7 +49,7 @@ impl Percent {
         let green = 0.3 * max_pct;
         let yellow = 0.7 * max_pct;
         match self.0 {
-            p if p < green => Color::Green,
+            p if p < green => GREEN,
             p if p < yellow => Color::Yellow,
             _ => Color::Red,
         }
@@ -256,7 +265,7 @@ mod tests {
 
     #[test]
     fn intensity_green() {
-        assert_eq!(Percent::new(15.0).color(), Color::Green);
+        assert_eq!(Percent::new(15.0).color(), GREEN);
     }
 
     #[test]
@@ -272,7 +281,7 @@ mod tests {
     #[test]
     fn color_scaled_green_at_eighth_core() {
         // 100 of 800 (12.5 %) — below 30 % of capacity.
-        assert_eq!(Percent::new(100.0).color_scaled(800.0), Color::Green);
+        assert_eq!(Percent::new(100.0).color_scaled(800.0), GREEN);
     }
 
     #[test]
@@ -290,7 +299,7 @@ mod tests {
     #[test]
     fn color_scaled_zero_max_falls_back_to_unscaled() {
         // Degenerate core count must not divide by zero or force Red.
-        assert_eq!(Percent::new(15.0).color_scaled(0.0), Color::Green);
+        assert_eq!(Percent::new(15.0).color_scaled(0.0), GREEN);
     }
 
     // --- braille_graph tests ---

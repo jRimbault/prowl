@@ -150,7 +150,7 @@ fn outer_block(
 /// = abnormal / pending cleanup.
 fn state_color(state: char) -> Color {
     match state {
-        'R' => Color::Green,
+        'R' => format::GREEN,
         'S' | 'I' => Color::Yellow,
         'D' | 'K' | 'W' => Color::Magenta,
         'T' | 't' => Color::Cyan,
@@ -239,7 +239,7 @@ pub(super) fn fd_usage_color(used: usize, soft_limit: Option<u64>) -> Color {
     } else if ratio >= 0.5 {
         Color::Yellow
     } else {
-        Color::Green
+        format::GREEN
     }
 }
 
@@ -247,7 +247,7 @@ pub(super) fn fd_usage_color(used: usize, soft_limit: Option<u64>) -> Color {
 /// `oom_score` is 0..=1000 in current kernels; 500+ is concerning.
 pub(super) fn oom_score_color(score: u16) -> Color {
     match score {
-        0..=200 => Color::Green,
+        0..=200 => format::GREEN,
         201..=500 => Color::White,
         501..=800 => Color::Yellow,
         _ => Color::Red,

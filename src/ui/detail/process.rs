@@ -148,7 +148,7 @@ fn render_activity(frame: &mut Frame, info: &ProcessDetail, area: Rect) {
     let wchan_style = if info.wchan.is_some() {
         Style::new().fg(Color::Cyan).bold()
     } else {
-        Style::new().fg(Color::Green).bold()
+        Style::new().fg(format::GREEN).bold()
     };
 
     let major_style = if info.major_faults > 0 {
