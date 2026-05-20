@@ -5,7 +5,7 @@
 //! `ui` (rendering).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt, fs,
     time::{Duration, UNIX_EPOCH},
 };
@@ -299,6 +299,75 @@ pub fn load_uid_map() -> HashMap<u32, String> {
         .collect()
 }
 
+/// Per-PID cache for fields that are effectively immutable across a process's
+/// lifetime.
+///
+/// `cmdline` and resolved `user` rarely change once a process is running, yet
+/// today they are re-read every tick: cmdline via `/proc/<pid>/cmdline`, user
+/// via `/proc/<pid>/status` (which parses ~50 lines just to extract `euid`).
+/// Caching them removes those reads from steady-state sampling cost.
+///
+/// Keys are `(Pid, starttime)`.  `starttime` is jiffies since boot from
+/// `/proc/<pid>/stat`; combined with the PID it uniquely identifies a process
+/// instance, so reused PIDs naturally miss the cache and re-read fresh values
+/// without explicit invalidation.
+#[derive(Default)]
+pub struct ProcCache {
+    cmdline: HashMap<(Pid, u64), String>,
+    user: HashMap<(Pid, u64), String>,
+    /// Keys observed during the current tick.  Reset to empty by `end_tick`.
+    /// Anything in the cache but not in `seen` at end-of-tick is evicted.
+    seen: HashSet<(Pid, u64)>,
+}
+
+impl ProcCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cmdline(&self, pid: Pid, starttime: u64) -> Option<&str> {
+        self.cmdline.get(&(pid, starttime)).map(String::as_str)
+    }
+
+    pub fn insert_cmdline(&mut self, pid: Pid, starttime: u64, value: String) {
+        self.cmdline.insert((pid, starttime), value);
+    }
+
+    pub fn user(&self, pid: Pid, starttime: u64) -> Option<&str> {
+        self.user.get(&(pid, starttime)).map(String::as_str)
+    }
+
+    pub fn insert_user(&mut self, pid: Pid, starttime: u64, value: String) {
+        self.user.insert((pid, starttime), value);
+    }
+
+    /// Mark `(pid, starttime)` as observed in the current tick.  Idempotent.
+    pub fn mark_seen(&mut self, pid: Pid, starttime: u64) {
+        self.seen.insert((pid, starttime));
+    }
+
+    /// Evict entries not marked via `mark_seen` since the last call to
+    /// `end_tick`, then reset the seen set for the next tick.
+    ///
+    /// Called from `collect_tree` after a successful scan.  Bounds cache
+    /// growth at the number of currently-alive processes plus threads.
+    pub fn end_tick(&mut self) {
+        let seen = std::mem::take(&mut self.seen);
+        self.cmdline.retain(|k, _| seen.contains(k));
+        self.user.retain(|k, _| seen.contains(k));
+    }
+
+    #[cfg(test)]
+    pub fn cmdline_len(&self) -> usize {
+        self.cmdline.len()
+    }
+
+    #[cfg(test)]
+    pub fn user_len(&self) -> usize {
+        self.user.len()
+    }
+}
+
 /// Per-tick state and configuration threaded through the sampling call chain.
 ///
 /// Bundles together the four values that previously had to be passed as
@@ -312,6 +381,7 @@ pub fn load_uid_map() -> HashMap<u32, String> {
 /// callers reborrow it transparently.
 pub struct SamplingContext<'a> {
     prev_ticks: &'a mut HashMap<Pid, u64>,
+    cache: &'a mut ProcCache,
     elapsed_secs: f64,
     cfg: &'a SystemConfig,
     uid_map: &'a HashMap<u32, String>,
@@ -320,12 +390,14 @@ pub struct SamplingContext<'a> {
 impl<'a> SamplingContext<'a> {
     pub fn new(
         prev_ticks: &'a mut HashMap<Pid, u64>,
+        cache: &'a mut ProcCache,
         elapsed_secs: f64,
         cfg: &'a SystemConfig,
         uid_map: &'a HashMap<u32, String>,
     ) -> Self {
         Self {
             prev_ticks,
+            cache,
             elapsed_secs,
             cfg,
             uid_map,
@@ -361,6 +433,9 @@ pub fn collect_tree(root_pid: Pid, ctx: &mut SamplingContext) -> anyhow::Result<
         .by_pid(root_pid.get())
         .ok_or_else(|| anyhow::Error::from(procfs::ProcError::NotFound(None)))?;
     let root = build_subtree(root_idx, &index, ctx)?;
+    // Evict cache entries for processes that vanished during this tick.
+    // Bounds growth at the current live (process + thread) population.
+    ctx.cache.end_tick();
     Ok(Tree::from(root))
 }
 
@@ -446,7 +521,7 @@ fn build_subtree(
     let entry = &index.entries[idx];
     let pid = Pid::new(entry.pid);
     let proc = Process::new(entry.pid)?;
-    let user = resolve_user(&proc, ctx.uid_map);
+    let user = resolve_user(&proc, pid, entry.stat.starttime, ctx);
     let parent_name = index.comm(entry.stat.ppid).unwrap_or_default().to_owned();
     let sample = ProcessSample {
         proc: &proc,
@@ -475,12 +550,14 @@ fn build_node(
     parent_name: String,
     ctx: &mut SamplingContext,
 ) -> anyhow::Result<Node> {
+    ctx.cache.mark_seen(sample.pid, sample.stat.starttime);
     let (cpu_pct, cpu_time) = sample_task_cpu(sample.pid, sample.stat, ctx);
+    let cmdline = read_cmdline(sample.proc, sample.stat, sample.pid, ctx);
     let (mem_rss_bytes, mem_pct) = compute_memory(sample.stat, ctx.cfg);
     Ok(Node {
         pid: sample.pid,
         name: sample.stat.comm.clone(),
-        cmdline: read_cmdline(sample.proc, sample.stat),
+        cmdline,
         user: user.to_owned(),
         state: sample.stat.state,
         cpu_pct,
@@ -552,28 +629,56 @@ fn read_io_totals(proc: &Process) -> anyhow::Result<IoTotals> {
 ///
 /// Falls back to the numeric UID string if the username is unknown, or to
 /// an empty string if `/proc/<pid>/status` is unreadable.
-fn resolve_user(proc: &Process, uid_map: &HashMap<u32, String>) -> String {
-    proc.status()
+///
+/// The resolved name is cached on `ctx.cache` keyed by `(pid, starttime)`:
+/// `/proc/<pid>/status` parsing dominates this call, and the euid is stable
+/// for the lifetime of a process (modulo setuid binaries, which we accept as
+/// a degraded edge case).  Subsequent ticks short-circuit on the cache hit.
+fn resolve_user(proc: &Process, pid: Pid, starttime: u64, ctx: &mut SamplingContext) -> String {
+    if let Some(cached) = ctx.cache.user(pid, starttime) {
+        return cached.to_owned();
+    }
+    let resolved = proc
+        .status()
         .ok()
         .map(|s| {
-            uid_map
+            ctx.uid_map
                 .get(&s.euid)
                 .cloned()
                 .unwrap_or_else(|| s.euid.to_string())
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    ctx.cache.insert_user(pid, starttime, resolved.clone());
+    resolved
 }
 
 /// Read the full command line (argv joined by spaces).
 ///
 /// Kernel threads and processes whose `/proc/<pid>/cmdline` is empty fall
 /// back to the short `comm` name from stat.
-fn read_cmdline(proc: &Process, stat: &procfs::process::Stat) -> String {
-    proc.cmdline()
+///
+/// Cached on `ctx.cache` keyed by `(pid, starttime)`.  Argv is fixed at
+/// `execve` for the vast majority of processes; the rare exception (`setproctitle`
+/// users like postgres or redis) trades freshness for the cost of an extra
+/// `/proc/<pid>/cmdline` open + read per process per tick — worth it.
+fn read_cmdline(
+    proc: &Process,
+    stat: &procfs::process::Stat,
+    pid: Pid,
+    ctx: &mut SamplingContext,
+) -> String {
+    if let Some(cached) = ctx.cache.cmdline(pid, stat.starttime) {
+        return cached.to_owned();
+    }
+    let resolved = proc
+        .cmdline()
         .ok()
         .filter(|v| !v.is_empty())
         .map(|v| v.join(" "))
-        .unwrap_or_else(|| stat.comm.clone())
+        .unwrap_or_else(|| stat.comm.clone());
+    ctx.cache
+        .insert_cmdline(pid, stat.starttime, resolved.clone());
+    resolved
 }
 
 /// Collect the threads (tasks) belonging to a process.
@@ -595,11 +700,26 @@ fn collect_threads(parent: ProcessSample, user: &str, ctx: &mut SamplingContext)
         .filter_map(|task| {
             let tstat = task.stat().ok()?;
             let tid = Pid::new(task.tid);
+            ctx.cache.mark_seen(tid, tstat.starttime);
             let (cpu_pct, cpu_time) = sample_task_cpu(tid, &tstat, ctx);
-            let thread_name =
-                fs::read_to_string(format!("/proc/{}/task/{}/comm", parent_pid.get(), task.tid))
-                    .map(|s| s.trim_end().to_owned())
-                    .unwrap_or_else(|_| tstat.comm.clone());
+            // Thread names live in the same cmdline cache slot — thread Nodes
+            // copy `thread_name` into both `name` and `cmdline`, so a single
+            // lookup serves both fields and one `read` syscall per (tid, starttime)
+            // covers a thread's whole lifetime.
+            let thread_name = if let Some(cached) = ctx.cache.cmdline(tid, tstat.starttime) {
+                cached.to_owned()
+            } else {
+                let computed = fs::read_to_string(format!(
+                    "/proc/{}/task/{}/comm",
+                    parent_pid.get(),
+                    task.tid
+                ))
+                .map(|s| s.trim_end().to_owned())
+                .unwrap_or_else(|_| tstat.comm.clone());
+                ctx.cache
+                    .insert_cmdline(tid, tstat.starttime, computed.clone());
+                computed
+            };
             Some(Node {
                 pid: tid,
                 name: thread_name.clone(),
@@ -960,6 +1080,81 @@ pub mod tests {
 
         assert_eq!(root.thread_count(), 2);
         assert_eq!(root.subprocess_count(), 2);
+    }
+
+    #[test]
+    fn proc_cache_miss_returns_none() {
+        let cache = ProcCache::new();
+        assert!(cache.cmdline(Pid::new(42), 100).is_none());
+        assert!(cache.user(Pid::new(42), 100).is_none());
+    }
+
+    #[test]
+    fn proc_cache_hit_returns_inserted_value() {
+        let mut cache = ProcCache::new();
+        cache.insert_cmdline(Pid::new(42), 100, "/bin/sh".to_owned());
+        cache.insert_user(Pid::new(42), 100, "root".to_owned());
+
+        assert_eq!(cache.cmdline(Pid::new(42), 100), Some("/bin/sh"));
+        assert_eq!(cache.user(Pid::new(42), 100), Some("root"));
+    }
+
+    #[test]
+    fn proc_cache_distinguishes_by_starttime() {
+        // Same PID, different starttime ⇒ the new process must miss the cache.
+        // This is what guarantees correctness under PID reuse without explicit
+        // invalidation on process death.
+        let mut cache = ProcCache::new();
+        cache.insert_cmdline(Pid::new(42), 100, "old".to_owned());
+
+        assert_eq!(cache.cmdline(Pid::new(42), 100), Some("old"));
+        assert_eq!(cache.cmdline(Pid::new(42), 200), None);
+    }
+
+    #[test]
+    fn proc_cache_end_tick_drops_unseen_entries() {
+        let mut cache = ProcCache::new();
+        cache.insert_cmdline(Pid::new(1), 100, "init".to_owned());
+        cache.insert_cmdline(Pid::new(2), 200, "gone".to_owned());
+        cache.insert_user(Pid::new(1), 100, "root".to_owned());
+        cache.insert_user(Pid::new(2), 200, "nobody".to_owned());
+
+        cache.mark_seen(Pid::new(1), 100);
+        cache.end_tick();
+
+        assert_eq!(cache.cmdline(Pid::new(1), 100), Some("init"));
+        assert_eq!(cache.cmdline(Pid::new(2), 200), None);
+        assert_eq!(cache.user(Pid::new(1), 100), Some("root"));
+        assert_eq!(cache.user(Pid::new(2), 200), None);
+        assert_eq!(cache.cmdline_len(), 1);
+        assert_eq!(cache.user_len(), 1);
+    }
+
+    #[test]
+    fn proc_cache_end_tick_without_marks_clears_all() {
+        let mut cache = ProcCache::new();
+        cache.insert_cmdline(Pid::new(1), 100, "x".to_owned());
+        cache.insert_user(Pid::new(1), 100, "u".to_owned());
+
+        cache.end_tick();
+
+        assert_eq!(cache.cmdline_len(), 0);
+        assert_eq!(cache.user_len(), 0);
+    }
+
+    #[test]
+    fn proc_cache_seen_resets_between_ticks() {
+        // Tick 1: mark, end_tick keeps it.  Tick 2: do not mark, end_tick
+        // evicts it.  Guarantees `seen` is per-tick, not cumulative.
+        let mut cache = ProcCache::new();
+        cache.insert_cmdline(Pid::new(1), 100, "x".to_owned());
+
+        cache.mark_seen(Pid::new(1), 100);
+        cache.end_tick();
+        assert_eq!(cache.cmdline_len(), 1);
+
+        cache.end_tick();
+        assert_eq!(cache.cmdline_len(), 0);
     }
 
     #[test]
