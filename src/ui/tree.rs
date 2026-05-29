@@ -20,7 +20,6 @@ use ratatui::{
 /// Which columns are visible at the current terminal width.
 struct ColumnSet {
     user: bool,
-    state_full: bool, // full word vs single char
     res: bool,
     elapsed: bool,
     /// Show accumulated CPU time alongside wall-clock elapsed.
@@ -36,7 +35,6 @@ impl ColumnSet {
             // Full layout + CPU time column
             Self {
                 user: true,
-                state_full: true,
                 res: true,
                 elapsed: true,
                 cpu_time: true,
@@ -45,7 +43,6 @@ impl ColumnSet {
             // Full layout
             Self {
                 user: true,
-                state_full: true,
                 res: true,
                 elapsed: true,
                 cpu_time: false,
@@ -54,16 +51,14 @@ impl ColumnSet {
             // Drop ELAPSED
             Self {
                 user: true,
-                state_full: true,
                 res: true,
                 elapsed: false,
                 cpu_time: false,
             }
         } else if w >= 70 {
-            // Drop RES; abbreviate STATE
+            // Drop RES
             Self {
                 user: true,
-                state_full: false,
                 res: false,
                 elapsed: false,
                 cpu_time: false,
@@ -72,16 +67,14 @@ impl ColumnSet {
             // Drop USER
             Self {
                 user: false,
-                state_full: false,
                 res: false,
                 elapsed: false,
                 cpu_time: false,
             }
         } else {
-            // Minimal: PID + STATE(char) + CPU% + Command
+            // Minimal: PID + CPU% + Command
             Self {
                 user: false,
-                state_full: false,
                 res: false,
                 elapsed: false,
                 cpu_time: false,
@@ -104,13 +97,6 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
     if cols.user {
         header_cells.push(Cell::new("USER"));
         widths.push(Constraint::Length(9));
-    }
-    if cols.state_full {
-        header_cells.push(Cell::new("STATE"));
-        widths.push(Constraint::Length(9));
-    } else {
-        header_cells.push(Cell::new("S"));
-        widths.push(Constraint::Length(3));
     }
     header_cells.push(Cell::new("CPU%"));
     widths.push(Constraint::Length(5));
@@ -207,11 +193,6 @@ pub fn render_tree(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     format!("{:<8}", fr.user())
                 }));
-            }
-            if cols.state_full {
-                cells.push(Cell::new(format!("{:<9}", format::state_word(fr.state()))));
-            } else {
-                cells.push(Cell::new(format!("{} ", fr.state())));
             }
             cells.push(
                 Cell::new(format!("{:>4.1}", fr.cpu_pct().value()))
@@ -322,7 +303,7 @@ mod tests {
 
     #[test]
     fn renders_full_layout() {
-        // 120 wide → richest ColumnSet (USER + STATE word + RES + ELAPSED + CPUT).
+        // 120 wide → richest ColumnSet (USER + RES + ELAPSED + CPUT).
         let mut app = test_support::make_app();
         let frame = test_support::render_widget(120, 14, |frame, area| {
             super::render_tree(frame, &mut app, area);
@@ -332,7 +313,7 @@ mod tests {
 
     #[test]
     fn renders_narrow_layout() {
-        // 60 wide → minimal ColumnSet (PID + STATE char + CPU% + Command).
+        // 60 wide → minimal ColumnSet (PID + CPU% + Command).
         let mut app = test_support::make_app();
         let frame = test_support::render_widget(60, 14, |frame, area| {
             super::render_tree(frame, &mut app, area);
